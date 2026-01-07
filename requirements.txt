@@ -5,3 +5,10 @@ pydantic
 torch
 transformers
 librosa
+opencv-python
+pillow
+numpy
+deepface
+tensorflow
+tf-keras
+pymongo
