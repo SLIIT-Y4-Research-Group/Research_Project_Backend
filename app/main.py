@@ -41,7 +41,7 @@ app = FastAPI(
 )
 
 origins = [
-    "http://localhost:62226",  # Your Flutter web app
+    "http://localhost:57332",  # Your Flutter web app
     "http://localhost:5173",   # Sometimes Vite/other dev servers
 ]
 # CORS middleware
