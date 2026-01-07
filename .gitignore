@@ -1,0 +1,20 @@
+# Virtual environment
+venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Environment variables
+.env
+
+# ML models
+models/*.h5
+models/*.tflite
+
+# Logs & cache
+*.log
+
+# IDE
+.vscode/
+.idea/
