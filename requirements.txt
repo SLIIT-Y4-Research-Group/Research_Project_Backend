@@ -5,3 +5,11 @@ pydantic
 torch
 transformers
 librosa
+pymongo[srv]
+python-dotenv
+email-validator
+certifi
+bcrypt==4.0.1
+python-jose[cryptography]
+passlib[bcrypt]==1.7.4
+python-multipart
