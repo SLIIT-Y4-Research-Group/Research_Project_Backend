@@ -17,3 +17,9 @@ app/models/best_emotion_model.keras
 # OS files
 .DS_Store
 Thumbs.db
+
+
+# ML model artifacts
+app/ml/model/
+*.safetensors
+*.bin
