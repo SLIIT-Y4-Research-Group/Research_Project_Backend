@@ -7,16 +7,51 @@ def pil_to_bgr(pil_img: Image.Image) -> np.ndarray:
     rgb = np.array(pil_img.convert("RGB"))
     return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
-def ink_mask(bgr: np.ndarray) -> np.ndarray:
+def detect_source_mode(bgr: np.ndarray, filename: str | None = None) -> str:
     """
-    Robust ink mask. Designed to work AFTER preprocess_for_analysis().
-    Reduces false-ink due to shadows in phone photos.
+    Heuristic:
+    - drawing_board.png / canvas exports -> digital_canvas
+    - otherwise -> photo_scan
     """
+    if filename:
+        name = filename.lower()
+        if "drawing_board" in name or name.endswith(".png"):
+            # this is a practical project heuristic
+            return "digital_canvas"
+    return "photo_scan"
+
+def _background_mask_digital_canvas(bgr: np.ndarray) -> np.ndarray:
+    """
+    For digital canvas exports:
+    identify non-background pixels by comparing each pixel to the dominant border color.
+    """
+    h, w = bgr.shape[:2]
+
+    border_pixels = np.concatenate([
+        bgr[0, :, :],
+        bgr[h - 1, :, :],
+        bgr[:, 0, :],
+        bgr[:, w - 1, :]
+    ], axis=0)
+
+    bg_color = np.median(border_pixels, axis=0).astype(np.uint8)
+
+    diff = np.abs(bgr.astype(np.int16) - bg_color.astype(np.int16))
+    dist = np.sqrt(np.sum(diff ** 2, axis=2))
+
+    # Anything sufficiently different from border color is foreground
+    mask = (dist > 25).astype(np.uint8) * 255
+
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, iterations=2)
+    return mask
+
+def _ink_mask_photo_scan(bgr: np.ndarray) -> np.ndarray:
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
     _, S, V = cv2.split(hsv)
 
-    # Ink: dark OR saturated (but not pure bright paper)
-    ink = (V < 200) | ((S > 40) & (V < 245))
+    ink = (V < 180) | ((S > 50) & (V < 235))
     mask = (ink.astype(np.uint8) * 255)
 
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -24,17 +59,35 @@ def ink_mask(bgr: np.ndarray) -> np.ndarray:
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, iterations=2)
     return mask
 
-def color_analysis(bgr: np.ndarray) -> Dict[str, Any]:
+def ink_mask(bgr: np.ndarray, source_mode: str = "photo_scan") -> np.ndarray:
+    if source_mode == "digital_canvas":
+        return _background_mask_digital_canvas(bgr)
+    return _ink_mask_photo_scan(bgr)
+
+def color_analysis(bgr: np.ndarray, source_mode: str = "photo_scan") -> Dict[str, Any]:
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
     H, S, V = cv2.split(hsv)
 
-    mean_v = float(np.mean(V))
-    mean_s = float(np.mean(S))
+    fg = ink_mask(bgr, source_mode=source_mode) > 0
+    fg_ratio = float(np.mean(fg))
 
-    colored_mask = ((V < 245) & (S > 25)).astype(np.uint8)
-    colored_ratio = float(np.mean(colored_mask))
+    if np.sum(fg) == 0:
+        return {
+            "mean_brightness_v": float(np.mean(V)),
+            "mean_saturation_s": float(np.mean(S)),
+            "colored_ratio": 0.0,
+            "dominant_hue_center": None,
+            "hue_histogram_18bins": [0] * 18,
+            "tags": ["mostly_blank"]
+        }
 
-    h_vals = H[colored_mask == 1]
+    mean_v = float(np.mean(V[fg]))
+    mean_s = float(np.mean(S[fg]))
+
+    colored_mask = fg & (V < 245) & (S > 25)
+    colored_ratio = float(np.sum(colored_mask) / np.sum(fg))
+
+    h_vals = H[colored_mask]
     hist_bins = 18
     if len(h_vals) > 0:
         hist = np.histogram(h_vals, bins=hist_bins, range=(0, 180))[0].astype(int).tolist()
@@ -45,8 +98,9 @@ def color_analysis(bgr: np.ndarray) -> Dict[str, Any]:
         dominant_hue_center = None
 
     tags = []
-    if colored_ratio < 0.03:
+    if fg_ratio < 0.03:
         tags.append("mostly_blank")
+
     if mean_v < 90:
         tags.append("dark_tones")
     elif mean_v > 220:
@@ -76,12 +130,13 @@ def color_analysis(bgr: np.ndarray) -> Dict[str, Any]:
         "mean_brightness_v": mean_v,
         "mean_saturation_s": mean_s,
         "colored_ratio": colored_ratio,
+        "foreground_ratio": fg_ratio,
         "dominant_hue_center": dominant_hue_center,
         "hue_histogram_18bins": hist,
         "tags": tags
     }
 
-def stroke_features(bgr: np.ndarray) -> Dict[str, Any]:
+def stroke_features(bgr: np.ndarray, source_mode: str = "photo_scan") -> Dict[str, Any]:
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
     edges = cv2.Canny(gray, threshold1=50, threshold2=150)
@@ -93,7 +148,7 @@ def stroke_features(bgr: np.ndarray) -> Dict[str, Any]:
 
     mean_intensity = float(np.mean(gray))
 
-    m = ink_mask(bgr)
+    m = ink_mask(bgr, source_mode=source_mode)
     ink_ratio = float(np.mean(m > 0))
 
     return {
@@ -108,9 +163,9 @@ def stroke_features(bgr: np.ndarray) -> Dict[str, Any]:
         ],
     }
 
-def spatial_arrangement(bgr: np.ndarray) -> Dict[str, Any]:
+def spatial_arrangement(bgr: np.ndarray, source_mode: str = "photo_scan") -> Dict[str, Any]:
     h, w = bgr.shape[:2]
-    m = ink_mask(bgr)
+    m = ink_mask(bgr, source_mode=source_mode)
 
     contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
@@ -119,26 +174,42 @@ def spatial_arrangement(bgr: np.ndarray) -> Dict[str, Any]:
             "bbox_norm": None,
             "center_offset": None,
             "coverage": 0.0,
+            "foreground_area_ratio": 0.0,
             "quadrant_ink": {"tl": 0, "tr": 0, "bl": 0, "br": 0},
             "notes": ["no contours found"]
         }
 
-    # Use bbox over ALL contours (stable)
-    xs, ys, x2s, y2s = [], [], [], []
+    min_area = 0.001 * (w * h)
+    filtered = []
     for c in contours:
+        area = cv2.contourArea(c)
+        if area >= min_area:
+            filtered.append(c)
+
+    if not filtered:
+        filtered = contours
+
+    xs, ys, x2s, y2s = [], [], [], []
+    total_contour_area = 0.0
+
+    for c in filtered:
         x, y, bw, bh = cv2.boundingRect(c)
-        xs.append(x); ys.append(y); x2s.append(x + bw); y2s.append(y + bh)
+        xs.append(x)
+        ys.append(y)
+        x2s.append(x + bw)
+        y2s.append(y + bh)
+        total_contour_area += cv2.contourArea(c)
 
     x1, y1, x2, y2 = min(xs), min(ys), max(x2s), max(y2s)
     bw, bh = x2 - x1, y2 - y1
 
     bbox_norm = {"x": x1 / w, "y": y1 / h, "w": bw / w, "h": bh / h}
+    coverage = float((bw * bh) / (w * h))
+    foreground_area_ratio = float(total_contour_area / (w * h))
 
     cx = (x1 + bw / 2) / w
     cy = (y1 + bh / 2) / h
     center_offset = {"dx": float(cx - 0.5), "dy": float(cy - 0.5)}
-
-    coverage = float((bw * bh) / (w * h))
 
     midx, midy = w // 2, h // 2
     tl = float(np.mean(m[:midy, :midx] > 0))
@@ -151,9 +222,11 @@ def spatial_arrangement(bgr: np.ndarray) -> Dict[str, Any]:
         "bbox_norm": {k: float(v) for k, v in bbox_norm.items()},
         "center_offset": center_offset,
         "coverage": coverage,
+        "foreground_area_ratio": foreground_area_ratio,
         "quadrant_ink": {"tl": tl, "tr": tr, "bl": bl, "br": br},
         "notes": [
-            "coverage small => small/withdrawn; large => expansive",
+            "coverage is bbox usage, not exact filled area",
+            "foreground_area_ratio is actual contour area ratio",
             "center_offset near (0,0) => centered; larger => peripheral",
             "quadrant_ink indicates balance / clustering"
         ],

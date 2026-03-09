@@ -2,6 +2,8 @@
 Parent Management Routes
 Handles parent operations: creating children, managing trusted contacts
 """
+from app.services.drawing_service import get_drawings_for_parent
+from app.schemas.parent_drawing_schema import ParentChildDrawingItem
 from fastapi import APIRouter, HTTPException, status, Depends
 from typing import List
 from app.schemas.auth_schema import TokenData
@@ -195,6 +197,20 @@ def list_trusted_contacts(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch trusted contacts: {str(e)}"
+        )
+
+@router.get("/drawings", response_model=List[ParentChildDrawingItem])
+def list_parent_drawings(current_parent: TokenData = Depends(get_current_parent)):
+    """
+    Get all drawing analysis entries for all children of the current parent
+    """
+    try:
+        drawings = get_drawings_for_parent(current_parent.id)
+        return drawings
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch drawings: {str(e)}"
         )
 
 @router.post("/children/{child_id}/trusted/{trusted_id}/remove")
