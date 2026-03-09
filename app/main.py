@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.database.mongo import mongodb
-from app.routes import story, ai_story
+from app.database.story.mongo import mongodb
+from app.routes.story import story, ai_story
 import logging
 import asyncio
 
