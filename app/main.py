@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database.mongo import mongodb
-from app.routes import story, health, ai_story
+from app.routes import story, ai_story
 import logging
 import asyncio
 
@@ -41,7 +41,7 @@ app = FastAPI(
 )
 
 origins = [
-    "http://localhost:53227",  # Your Flutter web app
+    "http://localhost:60456",  # Your Flutter web app
     "http://localhost:5173",   # Sometimes Vite/other dev servers
 ]
 # CORS middleware
@@ -55,7 +55,6 @@ app.add_middleware(
 
 # Include routers
 app.include_router(story.router)
-app.include_router(health.router)
 app.include_router(ai_story.router)
 
 @app.get("/")
@@ -68,7 +67,6 @@ async def root():
         "endpoints": {
             "ai_story_generation": "/ai/generate-story",
             "stories": "/stories/",
-            "health": "/health",
             "docs": "/docs"
         }
     }

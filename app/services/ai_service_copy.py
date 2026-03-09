@@ -4,7 +4,6 @@ import time
 import hashlib
 from typing import Dict, Optional
 import logging
-from app.core.config import settings
 
 from google import genai
 from google.genai import types  # For config
@@ -112,31 +111,26 @@ class EnhancedSinhalaStoryGenerator:
         length_instruction = length_map.get(story_length, "5 to 6 paragraphs")
 
         prompt = f"""
-ඔබ ශ්‍රී ලාංකීය ගම්මාන වල කතා කියන කථාකාරයෙකි.
+ඔබ ශ්‍රී ලාංකීය ජනප්‍රවාද කථා රචකයෙකි.
 
-කරුණාකර වයස අවුරුදු 12–14 අතර දරුවන්ට පහසුවෙන් කියවිය හැකි
-සරල සිංහලෙන් ජනප්‍රවාද ශෛලියේ කතාවක් ලියන්න.
+කරුණාකර සිංහලෙන් ගැඹුරු, සිනහව, විස්තර සහිත ජනප්‍රවාද කථාවක් ලියන්න.
+කරුණාකර 12 වයසට ආසන්න ළමුන්ට පහසුවෙන් කියවිය හැකි
+**සරල සිංහලෙන්** කථාවක් ලියන්න.
 
 කථාවේ විස්තර:
 - මනෝභාවය: {mood}
 - කාලගුණය: {weather}
-- ප්‍රධාන චරිතය: {character}
+- ප්‍රධාන චරිතය: {character} (මෙම සත්වයා ප්‍රධාන චරිතය ලෙස)
 
 අවශ්‍යතා:
-
-1. සරල සහ පැහැදිලි සිංහල වචන භාවිතා කරන්න
-2. කෙටි වාක්‍ය භාවිතා කරන්න
-3. දරුවන්ට තේරෙන ලෙස කතාව ලියන්න
-4. ගම්මාන කතා කියන ආකාරයේ ජනප්‍රවාද හැඟීම තබාගන්න
-5. අවස්ථා විස්තර කරන්න (ගස්, ගඟ, වනය, ගම්මාන)
-6. අවසානයේ සදාචාර පාඩමක් තිබිය යුතුය
-7. සංවාද (dialogue) ටිකක් ඇතුළත් කරන්න
-
-කථාවේ දිග:
-{length_instruction}
+- කථාව {length_instruction} වශයෙන් විස්තර කරන්න
+- ආරම්භය, මැද කොටස, උච්චතම අවස්ථාව සහ අවසානය පැහැදිලිව තිබිය යුතුය
+- ස්වභාවික පරිසරය සහ චරිතවල හැසිරීම් විස්තර කරන්න
+- අවසානයේ සදාචාර පාඩමක් පැහැදිලිව සඳහන් කරන්න
+- කථාවේ මනෝභාවය අනුගමනය කර සිංහල ජනප්‍රවාද ශෛලියෙන් ලියන්න
 
 ආරම්භ වාක්‍යය:
-{starter_sentence if starter_sentence else "ඉතා කලකට පෙර, ගම්මානයක් අසල..."}
+{starter_sentence if starter_sentence else "අතීතයේ එක් සමයක..."}
 """
 
         # Generate text using the correct SDK call
@@ -172,5 +166,5 @@ class EnhancedSinhalaStoryGenerator:
 
 
 story_generator = EnhancedSinhalaStoryGenerator(
-    api_key=settings.GEMINI_API_KEY
+    api_key=os.getenv("AIzaSyAhQdN9HSXkKcA3VCO-vmt4lQt1SAFWqiE", "AIzaSyAhQdN9HSXkKcA3VCO-vmt4lQt1SAFWqiE")
 )
