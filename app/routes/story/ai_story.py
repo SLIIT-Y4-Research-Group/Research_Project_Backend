@@ -239,34 +239,6 @@ async def get_model_info():
             detail=f"Failed to get model info: {str(e)}"
         )
 
-@router.get("/health")
-async def ai_health_check():
-    """Check if AI service is healthy"""
-    try:
-        info = story_generator.get_model_info()
-        
-        status_key = "status" if "status" in info else "model_status"
-        
-        if info.get(status_key, "").lower() in ["active", "loaded", "ready"]:
-            return {
-                "status": "healthy",
-                "model": info.get("model_type", "Unknown"),
-                "story_types": list(story_generator.folk_tale_templates.keys()) if hasattr(story_generator, 'folk_tale_templates') else [],
-                "supports_long_stories": info.get("supports_long_stories", False),
-                "timestamp": time.time()
-            }
-        else:
-            return {
-                "status": "unhealthy",
-                "reason": "Model not loaded properly",
-                "timestamp": time.time()
-            }
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "reason": str(e),
-            "timestamp": time.time()
-        }
 
 # Optional: For backward compatibility with old frontend
 class LegacyStoryRequest(BaseModel):
