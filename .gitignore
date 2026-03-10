@@ -25,6 +25,11 @@ __pycache__/
 # SQLite DB
 *.db
 
+# Model files
+*.keras
+*.h5
+app/models/best_emotion_model.keras
+
 # OS files
 .DS_Store
 Thumbs.db

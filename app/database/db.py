@@ -1,4 +1,4 @@
-from pymongo import MongoClient, ASCENDING
+from pymongo import MongoClient, ASCENDING, DESCENDING
 from app.core.config import MONGO_URI, MONGO_DB_NAME
 
 # MongoDB Client Setup
@@ -16,6 +16,8 @@ parents_col = db["parents"]
 children_col = db["children"]
 trusted_contacts_col = db["trusted_contacts"]
 moods_col = db["moods"]
+tracks_col = db["tracks"]
+leaderboard_col = db["leaderboard"]
 
 # Create indexes
 def create_indexes():
@@ -35,6 +37,14 @@ def create_indexes():
         
         # Moods: index for child_id and datetime for efficient querying
         moods_col.create_index([("child_id", ASCENDING), ("datetime", ASCENDING)])
+
+        # Tracks: index for created_at for sorting
+        tracks_col.create_index([("created_at", ASCENDING)])
+
+        # Leaderboard: indexes for sorting and player lookup
+        leaderboard_col.create_index([("score", DESCENDING)])
+        leaderboard_col.create_index([("created_at", ASCENDING)])
+        leaderboard_col.create_index([("player_name", ASCENDING)])
         
         # Moods: unique index for child_id + date_key to enforce one mood per day
         # Partial index only applies to documents with date_key field (skips old records)

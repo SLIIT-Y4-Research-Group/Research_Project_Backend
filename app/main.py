@@ -3,6 +3,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.routes import mood_routes, auth_routes, parent_management_routes, child_routes, trusted_routes, music_routes, leaderboard_routes, emotion_routes
 import logging
 
 from app.routes import mood_routes, auth_routes, parent_management_routes, child_routes, trusted_routes
@@ -56,6 +57,9 @@ app.include_router(auth_routes.router)
 app.include_router(parent_management_routes.router)
 app.include_router(child_routes.router)
 app.include_router(trusted_routes.router)
+app.include_router(music_routes.router)
+app.include_router(leaderboard_routes.router)
+app.include_router(emotion_routes.router)
 
 
 app.include_router(story.router)
