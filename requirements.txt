@@ -17,3 +17,11 @@ pillow
 opencv-python
 torchvision
 ultralytics
+motor==3.3.2
+tensorflow==2.15.0
+numpy==1.24.3
+scikit-learn==1.3.2
+pandas==2.1.4
+pydantic-settings
+google
+google-generativeai

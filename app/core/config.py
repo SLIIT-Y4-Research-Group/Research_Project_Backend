@@ -39,4 +39,7 @@ FROM_EMAIL = os.getenv("FROM_EMAIL", "")
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
 
-BAD_MOOD_THRESHOLD = int(os.getenv("BAD_MOOD_THRESHOLD", "5"))
+# Alert Configuration
+BAD_MOOD_THRESHOLD = int(os.getenv("BAD_MOOD_THRESHOLD", "5"))  # Alert if >= 5 bad moods in 7 days
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
