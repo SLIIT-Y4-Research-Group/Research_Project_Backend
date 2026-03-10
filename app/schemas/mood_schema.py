@@ -43,3 +43,29 @@ class MoodOverallRequest(BaseModel):
 class AlertPermissionResponse(BaseModel):
     """Request schema for student responding to alert permission"""
     approve: bool
+
+class TodayMoodStatusResponse(BaseModel):
+    """Response schema for GET /child/me/today-mood-status"""
+    completed: bool
+    date: str
+    mood: Optional[str] = None
+    recorded_at: Optional[datetime] = None  # Fixed: renamed from 'datetime' to avoid collision
+
+class WeeklyMoodDay(BaseModel):
+    """Single day in weekly mood history"""
+    date: str
+    mood: Optional[str] = None
+    completed: bool
+    recorded_at: Optional[datetime] = None  # Fixed: renamed from 'datetime' to avoid collision
+
+class WeeklyMoodSummary(BaseModel):
+    """Summary statistics for weekly moods"""
+    happy: int
+    normal: int
+    bad: int
+    missed: int
+
+class WeeklyMoodsResponse(BaseModel):
+    """Response schema for GET /child/me/weekly-moods"""
+    days: list[WeeklyMoodDay]
+    summary: WeeklyMoodSummary

@@ -36,6 +36,26 @@ def create_indexes():
         # Moods: index for child_id and datetime for efficient querying
         moods_col.create_index([("child_id", ASCENDING), ("datetime", ASCENDING)])
         
+        # Moods: unique index for child_id + date_key to enforce one mood per day
+        # Partial index only applies to documents with date_key field (skips old records)
+        try:
+            moods_col.create_index(
+                [("child_id", ASCENDING), ("date_key", ASCENDING)],
+                unique=True,
+                partialFilterExpression={"date_key": {"$exists": True, "$ne": None}}
+            )
+        except Exception as e:
+            # If index already exists or conflicts, try to drop and recreate
+            try:
+                moods_col.drop_index("child_id_1_date_key_1")
+                moods_col.create_index(
+                    [("child_id", ASCENDING), ("date_key", ASCENDING)],
+                    unique=True,
+                    partialFilterExpression={"date_key": {"$exists": True, "$ne": None}}
+                )
+            except Exception as e2:
+                print(f"⚠ Could not create date_key index: {str(e2)}")
+        
         print("✓ MongoDB indexes created successfully")
     except Exception as e:
         print(f"⚠ MongoDB index creation issue: {str(e)}")
