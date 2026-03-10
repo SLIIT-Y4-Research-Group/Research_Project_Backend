@@ -9,7 +9,7 @@ from PIL import Image
 from app.services.emotion_model_service import predict_emotion, EMOTION_LABELS, IMG_SIZE
 from app.services.face_generation_service import generate_happy_face
 
-router = APIRouter()
+router = APIRouter(prefix="/emotion", tags=["Emotion"])
 
 class EmotionRequest(BaseModel):
     data: list  # input vector or preprocessed image array
