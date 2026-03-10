@@ -2,7 +2,7 @@
 venv/
 
 # Environment variables
-.env
+.env copy
 
 # ML models
 models/*.h5

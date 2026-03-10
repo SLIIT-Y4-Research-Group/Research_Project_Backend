@@ -1,0 +1,4 @@
+MONGODB_URI=mongodb+srv://kavi123:kavi123@cluster0.cn6vezc.mongodb.net/research_project?retryWrites=true&w=majority
+MONGODB_DB_NAME=research_project
+SECRET_KEY=your-secret-key-here
+GEMINI_API_KEY=AIzaSyBChJmJxTXmAeMB-p-vMqHim-pC2DVs20Q
