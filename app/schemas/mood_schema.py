@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
 
 class MoodCheckin(BaseModel):
     child_id: int
@@ -38,3 +39,7 @@ class ValidateAnswerRequest(BaseModel):
 
 class MoodOverallRequest(BaseModel):
     answers: list[str]
+
+class AlertPermissionResponse(BaseModel):
+    """Request schema for student responding to alert permission"""
+    approve: bool

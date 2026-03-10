@@ -49,6 +49,12 @@ def create_child(parent_id: str, username: str, password: str, name: str, age: i
         "name": name,
         "age": age,
         "alerts_consent": False,  # Default is OFF
+        "pending_alert": {  # Per-incident permission tracking
+            "exists": False,
+            "bad_mood_count": 0,
+            "created_at": None,
+            "mood_id": None
+        },
         "created_at": datetime.utcnow()
     }
     
@@ -134,3 +140,55 @@ def verify_child_belongs_to_parent(child_id: str, parent_id: str) -> bool:
     })
     
     return child is not None
+
+def set_pending_alert(child_id: str, bad_mood_count: int, mood_id: ObjectId) -> bool:
+    """
+    Set pending alert for child (permission needed before sending email)
+    
+    Args:
+        child_id: Child ObjectId as string
+        bad_mood_count: Number of bad moods in last 7 days
+        mood_id: The mood ObjectId that triggered the alert
+        
+    Returns:
+        True if update successful, False otherwise
+    """
+    if not ObjectId.is_valid(child_id):
+        return False
+    
+    result = children_col.update_one(
+        {"_id": ObjectId(child_id)},
+        {"$set": {
+            "pending_alert.exists": True,
+            "pending_alert.bad_mood_count": bad_mood_count,
+            "pending_alert.created_at": datetime.utcnow(),
+            "pending_alert.mood_id": mood_id
+        }}
+    )
+    
+    return result.modified_count > 0
+
+def clear_pending_alert(child_id: str) -> bool:
+    """
+    Clear pending alert for child
+    
+    Args:
+        child_id: Child ObjectId as string
+        
+    Returns:
+        True if update successful, False otherwise
+    """
+    if not ObjectId.is_valid(child_id):
+        return False
+    
+    result = children_col.update_one(
+        {"_id": ObjectId(child_id)},
+        {"$set": {
+            "pending_alert.exists": False,
+            "pending_alert.bad_mood_count": 0,
+            "pending_alert.created_at": None,
+            "pending_alert.mood_id": None
+        }}
+    )
+    
+    return result.modified_count > 0

@@ -89,11 +89,11 @@ KEYWORDS = {
     ],
     3: [
         "පාඩම්", "homework", "exam", "පරීක්ෂණ", "විභාග", "ආතතිය", 
-        "stress", "assignment", "test", "classwork",
+        "stress", "assignment", "test", "classwork", "බැන්නා","බැන්න"
     ],
     4: [
         "මහන්සි", "වෙහෙස", "නිදා", "නින්ද", "විවේක", 
-        "rest", "sleep", "කම්මැලි",
+        "rest", "sleep", "කම්මැලි","සාමාන්‍ය"
     ],
     5: [
         "සතුටු", "හොඳ", "ජය", "win", "ලැබුණා", "gift", 
