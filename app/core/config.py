@@ -25,3 +25,8 @@ BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
 
 # Alert Configuration
 BAD_MOOD_THRESHOLD = int(os.getenv("BAD_MOOD_THRESHOLD", "5"))  # Alert if >= 5 bad moods in 7 days
+
+# Cloudinary
+CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY", "")
+CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "")

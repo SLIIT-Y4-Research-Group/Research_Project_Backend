@@ -5,6 +5,70 @@ import cv2
 from deepface import DeepFace
 import io
 import base64
+import os
+
+_HF_FACE_DETECTOR = None
+
+
+def _get_face_detector_provider():
+    provider = os.getenv("FACE_DETECTOR_PROVIDER", "deepface").strip().lower()
+    return provider if provider in {"deepface", "huggingface"} else "deepface"
+
+
+def _get_hf_face_detector():
+    global _HF_FACE_DETECTOR
+    if _HF_FACE_DETECTOR is not None:
+        return _HF_FACE_DETECTOR
+
+    from transformers import pipeline
+
+    model_name = os.getenv("FACE_DETECTOR_MODEL", "").strip()
+    if not model_name:
+        return None
+
+    _HF_FACE_DETECTOR = pipeline("object-detection", model=model_name)
+    return _HF_FACE_DETECTOR
+
+
+def _get_hf_face_labels():
+    labels = os.getenv("FACE_DETECTOR_LABELS", "face,person")
+    return {label.strip().lower() for label in labels.split(",") if label.strip()}
+
+
+def _detect_face_hf(image_array):
+    detector = _get_hf_face_detector()
+    if detector is None:
+        raise RuntimeError("Hugging Face face detector is not configured. Set FACE_DETECTOR_MODEL.")
+
+    pil_image = Image.fromarray(image_array)
+    results = detector(pil_image)
+    if not isinstance(results, list):
+        results = [results]
+
+    allowed_labels = _get_hf_face_labels()
+    best = None
+    best_score = -1.0
+    for item in results:
+        label = str(item.get("label", "")).lower()
+        score = float(item.get("score", 0))
+        if label in allowed_labels and score > best_score:
+            best = item
+            best_score = score
+
+    if best is None:
+        return None
+
+    h, w = image_array.shape[:2]
+    box = best.get("box", {})
+    xmin = max(0, min(w - 1, int(box.get("xmin", 0))))
+    ymin = max(0, min(h - 1, int(box.get("ymin", 0))))
+    xmax = max(0, min(w, int(box.get("xmax", 0))))
+    ymax = max(0, min(h, int(box.get("ymax", 0))))
+
+    width = max(1, xmax - xmin)
+    height = max(1, ymax - ymin)
+
+    return {"x": xmin, "y": ymin, "w": width, "h": height}
 
 def generate_happy_face(image_array):
     """
@@ -23,40 +87,64 @@ def generate_happy_face(image_array):
             image_array = (image_array * 255).astype(np.uint8)
         else:
             image_array = image_array.astype(np.uint8)
-        
+
+        provider = _get_face_detector_provider()
+
         # Detect face and get facial area
         try:
-            face_objs = DeepFace.extract_faces(
-                img_path=image_array,
-                enforce_detection=False,
-                detector_backend='opencv',
-                align=True
-            )
-            
-            if not face_objs:
-                # If no face detected, return enhanced version
-                return enhance_for_happiness(image_array)
-                
-            # Get the first detected face
-            face_obj = face_objs[0]
-            facial_area = face_obj['facial_area']
-            
+            if provider == "huggingface":
+                facial_area = _detect_face_hf(image_array)
+                if facial_area is None:
+                    return enhance_for_happiness(image_array)
+            else:
+                face_objs = DeepFace.extract_faces(
+                    img_path=image_array,
+                    enforce_detection=False,
+                    detector_backend='opencv',
+                    align=True
+                )
+
+                if not face_objs:
+                    # If no face detected, return enhanced version
+                    return enhance_for_happiness(image_array)
+
+                # Get the first detected face
+                face_obj = face_objs[0]
+                facial_area = face_obj['facial_area']
+
             # Extract face coordinates
             x, y, w, h = facial_area['x'], facial_area['y'], facial_area['w'], facial_area['h']
-            
+
             # Apply happiness transformation
             happy_image = apply_happiness_transform(image_array.copy(), x, y, w, h)
-            
+
             # Convert to base64
             happy_base64 = numpy_to_base64(happy_image)
-            
+
             return happy_base64, True
-            
+
         except Exception as e:
             print(f"Face detection error: {e}")
+            if provider == "huggingface":
+                try:
+                    face_objs = DeepFace.extract_faces(
+                        img_path=image_array,
+                        enforce_detection=False,
+                        detector_backend='opencv',
+                        align=True
+                    )
+                    if face_objs:
+                        face_obj = face_objs[0]
+                        facial_area = face_obj['facial_area']
+                        x, y, w, h = facial_area['x'], facial_area['y'], facial_area['w'], facial_area['h']
+                        happy_image = apply_happiness_transform(image_array.copy(), x, y, w, h)
+                        happy_base64 = numpy_to_base64(happy_image)
+                        return happy_base64, True
+                except Exception as deepface_error:
+                    print(f"DeepFace fallback error: {deepface_error}")
             # Fallback to simple enhancement
             return enhance_for_happiness(image_array)
-            
+
     except Exception as e:
         print(f"Error generating happy face: {e}")
         return None, False
