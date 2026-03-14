@@ -34,9 +34,20 @@ class ChildProfileResponse(BaseModel):
     name: str
     age: int
     alerts_consent: bool
+    has_seen_first_login_prompt: bool
 
 class ChildConsentUpdate(BaseModel):
     alerts_consent: bool
+
+class FirstLoginPromptSeenRequest(BaseModel):
+    """Request schema for marking first login prompt as seen"""
+    seen: bool
+
+class ChildPasswordResetRequest(BaseModel):
+    """Request schema for child password reset"""
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=6)
+    confirm_password: Optional[str] = Field(None, min_length=6)
 
 # Trusted Contacts
 class TrustedContactInviteRequest(BaseModel):

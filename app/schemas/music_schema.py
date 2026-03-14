@@ -19,3 +19,21 @@ class TrackCreateResponse(BaseModel):
     cover_url: str
     created_at: datetime
     uploader: TrackUploader
+
+
+class TrackResponse(BaseModel):
+    """Response for a single track"""
+    id: str
+    title: str
+    artist: str
+    emotions: List[str]
+    music_url: str
+    cover_url: str
+    created_at: datetime
+    uploader: TrackUploader
+
+
+class TracksListResponse(BaseModel):
+    """Response for list of tracks"""
+    tracks: List[TrackResponse]
+    count: int

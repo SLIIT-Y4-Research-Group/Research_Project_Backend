@@ -96,3 +96,25 @@ def create_track(
     result = tracks_col.insert_one(track_doc)
     track_doc["_id"] = result.inserted_id
     return track_doc
+
+
+def get_tracks_by_emotion(emotion: str) -> List[dict]:
+    """
+    Get all tracks that match the specified emotion
+    
+    Args:
+        emotion: Emotion to filter by (e.g., "sad", "happy", "angry")
+        
+    Returns:
+        List of track documents
+    """
+    # Case-insensitive search for the emotion in the emotions array
+    query = {"emotions": {"$regex": f"^{emotion}$", "$options": "i"}}
+    
+    tracks = list(tracks_col.find(query).sort("created_at", -1))
+    
+    # Convert ObjectId to string
+    for track in tracks:
+        track["_id"] = str(track["_id"])
+    
+    return tracks

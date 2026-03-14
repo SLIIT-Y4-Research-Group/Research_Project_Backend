@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.schemas.mood_schema import MoodCheckin, MoodData, MoodStoreRequest, MoodPredictRequest, MoodQuestionPredictRequest, ValidateAnswerRequest, MoodOverallRequest, AlertPermissionResponse
-from app.services.mood_service import save_mood
+from app.services.mood_service import save_mood, get_today_mood_for_child, get_weekly_moods_for_child
 from app.services.answer_validator import validate_answer, normalize_text
 from app.ml.predictor import predict_with_probs
 from app.services.auth_service import get_current_child
@@ -20,6 +20,66 @@ def mood_checkin(data: MoodCheckin):
         "mood": result.mood,
         "note": result.note
     }}
+
+@router.get("/today")
+def get_today_mood(current_child: TokenData = Depends(get_current_child)):
+    """
+    Get today's mood for the current child
+    
+    Returns:
+    - If mood recorded today: {status: "success", mood: {_id, mood, datetime, date_key}, completed: true}
+    - If no mood today: {status: "success", mood: null, completed: false}
+    """
+    mood = get_today_mood_for_child(current_child.id)
+    
+    if mood:
+        return {
+            "status": "success",
+            "completed": True,
+            "mood": {
+                "_id": str(mood["_id"]),
+                "mood": mood["mood"],
+                "datetime": mood["datetime"],
+                "date_key": mood.get("date_key")
+            }
+        }
+    else:
+        return {
+            "status": "success",
+            "completed": False,
+            "mood": None
+        }
+
+@router.get("/history")
+def get_mood_history(
+    days: int = 7,
+    current_child: TokenData = Depends(get_current_child)
+):
+    """
+    Get mood history for the last N days (default 7)
+    
+    Returns list of dates with mood status:
+    [
+        {date: "2026-03-11", mood: "Bad", completed: true, datetime: "..."},
+        {date: "2026-03-10", mood: null, completed: false, datetime: null},
+        ...
+    ]
+    """
+    from datetime import datetime, timedelta
+    
+    # Limit to reasonable range
+    if days < 1:
+        days = 7
+    if days > 30:
+        days = 30
+    
+    moods = get_weekly_moods_for_child(current_child.id, days)
+    
+    return {
+        "status": "success",
+        "days": days,
+        "moods": moods
+    }
 
 @router.post("/store")
 def store_mood(data: MoodStoreRequest, current_child: TokenData = Depends(get_current_child)):
@@ -51,22 +111,19 @@ def store_mood(data: MoodStoreRequest, current_child: TokenData = Depends(get_cu
         dt=data.datetime
     )
     
-    # If mood already exists for today, return early with "already_exists" status
+    # If mood already exists for today, return 409 Conflict
     if not created:
-        logger.info(f"Mood already exists for child {current_child.id} - returning 'already_exists' status")
-        return {
-            "status": "already_exists",
-            "message": "Mood already recorded for today",
-            "data": {
-                "_id": str(mood_doc["_id"]),
-                "child_id": str(mood_doc["child_id"]),
-                "mood": mood_doc["mood"],
-                "datetime": mood_doc["datetime"],
-                "date_key": mood_doc["date_key"]
-            },
-            "alert_permission_needed": False,
-            "bad_mood_count": None
-        }
+        logger.warning(f"Mood already exists for child {current_child.id} on {mood_doc.get('date_key')} - returning 409 Conflict")
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Mood already recorded for today",
+                "date_key": mood_doc.get("date_key"),
+                "existing_mood": mood_doc["mood"],
+                "recorded_at": mood_doc["datetime"]
+            }
+        )
     
     # Mood successfully created - now check for alert logic
     alert_permission_needed = False
@@ -79,32 +136,40 @@ def store_mood(data: MoodStoreRequest, current_child: TokenData = Depends(get_cu
         
         # Only check if child exists AND has global consent enabled
         if child and child.get("alerts_consent", False):
-            # Count bad moods in last 7 days (now uses daily moods only)
-            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+            # Count bad moods in last 7 days using date_key (timezone-consistent)
+            from app.services.mood_service import get_today_date_key, get_date_key_from_datetime
+            today_key = get_today_date_key()
+            date_keys_7d = []
+            from datetime import datetime as dt_class
+            today_dt = dt_class.strptime(today_key, "%Y-%m-%d")
+            for i in range(7):
+                d = today_dt - timedelta(days=i)
+                date_keys_7d.append(d.strftime("%Y-%m-%d"))
             
             bad_mood_count = moods_col.count_documents({
                 "child_id": ObjectId(current_child.id),
                 "mood": {"$in": ["Bad", "bad", "BAD"]},
-                "datetime": {"$gte": seven_days_ago}
+                "date_key": {"$in": date_keys_7d}
             })
             
-            logger.debug(f"Bad mood count for child {current_child.id}: {bad_mood_count} (threshold: {BAD_MOOD_THRESHOLD})")
+            logger.info(f"Alert check - Child: {current_child.id}, Bad mood count (7 days): {bad_mood_count}, Threshold: {BAD_MOOD_THRESHOLD}, Alerts enabled: {child.get('alerts_consent')}")
             
             # NEW BEHAVIOR: Mark pending alert instead of sending immediately
             if bad_mood_count >= BAD_MOOD_THRESHOLD:
-                logger.info(f"Bad mood threshold reached for child {current_child.id} - setting pending alert")
+                logger.warning(f"🚨 Bad mood threshold reached! Child {current_child.id} has {bad_mood_count} bad moods (threshold: {BAD_MOOD_THRESHOLD})")
                 # Check if there's already a pending alert to avoid duplicates
                 pending_alert = child.get("pending_alert", {})
                 if not pending_alert.get("exists", False):
                     # Mark alert as pending (requires student permission)
                     from app.services.child_service import set_pending_alert
                     set_pending_alert(current_child.id, bad_mood_count, mood_doc["_id"])
-                    logger.debug(f"Pending alert set for child {current_child.id}")
+                    logger.info(f"✓ Pending alert set for child {current_child.id} - permission dialog will be shown")
                 else:
                     logger.debug(f"Pending alert already exists for child {current_child.id}")
                 
                 # Signal to frontend that permission dialog should be shown
                 alert_permission_needed = True
+                logger.info(f"✓ Setting alert_permission_needed=True in response")
     except Exception as e:
         # Log error but don't fail the mood storage
         print(f"Alert check failed: {str(e)}")
@@ -432,26 +497,45 @@ def respond_alert_permission(
     
     # Handle student's decision
     if data.approve:
+        logger.info(f"📧 Student {current_child.id} ({child.get('name')}) APPROVED alert - sending emails")
+        
         # Student APPROVED - send email alerts
         recipients = get_parent_and_trusted_emails(current_child.id)
+        logger.info(f"📧 Email recipients: {recipients}")
         
+        email_sent = False
         if recipients:
-            send_mood_alert(
-                recipients=recipients,
-                child_name=child.get("name", "the child"),
-                bad_mood_count=pending_alert.get("bad_mood_count", 0)
-            )
+            try:
+                logger.info(f"📧 Attempting to send alert to {len(recipients)} recipient(s)")
+                email_result = send_mood_alert(
+                    recipients=recipients,
+                    child_name=child.get("name", "the child"),
+                    bad_mood_count=pending_alert.get("bad_mood_count", 0)
+                )
+                email_sent = bool(email_result)
+                if email_sent:
+                    logger.info(f"✅ SUCCESS: Email sent to {recipients}")
+                else:
+                    logger.error(f"❌ FAILED: send_mood_alert returned False")
+            except Exception as e:
+                logger.error(f"❌ EXCEPTION sending email: {str(e)}", exc_info=True)
+                email_sent = False
+        else:
+            logger.warning(f"⚠️ No recipients found for child {current_child.id}")
         
         # Clear pending alert
         clear_pending_alert(current_child.id)
+        logger.info(f"✓ Cleared pending alert for child {current_child.id}")
         
         return {
             "status": "success",
-            "message": "Alert sent to parent and trusted contacts",
-            "email_sent": True
+            "message": "Alert sent to parent and trusted contacts" if email_sent else "Alert approved but email sending failed",
+            "email_sent": email_sent,
+            "recipients_count": len(recipients) if recipients else 0
         }
     else:
         # Student DECLINED - do not send email
+        logger.info(f"❌ Student {current_child.id} ({child.get('name')}) DECLINED alert - no email sent")
         clear_pending_alert(current_child.id)
         
         return {
