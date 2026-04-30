@@ -86,10 +86,10 @@ def create_track(
         "cover_public_id": cover_upload.get("public_id"),
         "created_at": datetime.utcnow(),
         "uploader": {
-            "id": uploader.id,
-            "role": uploader.role,
-            "email": uploader.email,
-            "username": uploader.username
+            "id": getattr(uploader, "id", "anonymous"),
+            "role": getattr(uploader, "role", "guest"),
+            "email": getattr(uploader, "email", None),
+            "username": getattr(uploader, "username", "anonymous")
         }
     }
 
