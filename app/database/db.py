@@ -5,6 +5,12 @@ from app.core.config import MONGO_URI, MONGO_DB_NAME
 client = MongoClient(MONGO_URI)
 db = client[MONGO_DB_NAME]
 
+
+# collection: drawing analyses
+drawing_analyses = db["drawing_analyses"]
+
+moods = db["moods"]
+
 # Collections
 parents_col = db["parents"]
 children_col = db["children"]
@@ -39,6 +45,26 @@ def create_indexes():
         leaderboard_col.create_index([("score", DESCENDING)])
         leaderboard_col.create_index([("created_at", ASCENDING)])
         leaderboard_col.create_index([("player_name", ASCENDING)])
+        
+        # Moods: unique index for child_id + date_key to enforce one mood per day
+        # Partial index only applies to documents with date_key field (skips old records)
+        try:
+            moods_col.create_index(
+                [("child_id", ASCENDING), ("date_key", ASCENDING)],
+                unique=True,
+                partialFilterExpression={"date_key": {"$exists": True, "$ne": None}}
+            )
+        except Exception as e:
+            # If index already exists or conflicts, try to drop and recreate
+            try:
+                moods_col.drop_index("child_id_1_date_key_1")
+                moods_col.create_index(
+                    [("child_id", ASCENDING), ("date_key", ASCENDING)],
+                    unique=True,
+                    partialFilterExpression={"date_key": {"$exists": True, "$ne": None}}
+                )
+            except Exception as e2:
+                print(f"⚠ Could not create date_key index: {str(e2)}")
         
         print("✓ MongoDB indexes created successfully")
     except Exception as e:

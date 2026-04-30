@@ -1,5 +1,21 @@
 # Virtual environment
 venv/
+
+# Environment variables
+.env copy
+
+# ML models
+models/*.h5
+models/*.tflite
+
+# Logs & cache
+*.log
+
+# IDE
+.vscode/
+.idea/
+# Virtual environment
+venv/
 .env
 
 # Python cache

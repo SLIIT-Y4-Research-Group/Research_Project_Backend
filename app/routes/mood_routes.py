@@ -1,10 +1,13 @@
 from fastapi import APIRouter, Depends
-from app.schemas.mood_schema import MoodCheckin, MoodData, MoodStoreRequest, MoodPredictRequest, MoodQuestionPredictRequest, ValidateAnswerRequest, MoodOverallRequest
+from app.schemas.mood_schema import MoodCheckin, MoodData, MoodStoreRequest, MoodPredictRequest, MoodQuestionPredictRequest, ValidateAnswerRequest, MoodOverallRequest, AlertPermissionResponse
 from app.services.mood_service import save_mood
 from app.services.answer_validator import validate_answer, normalize_text
 from app.ml.predictor import predict_with_probs
 from app.services.auth_service import get_current_child
 from app.schemas.auth_schema import TokenData
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/mood", tags=["Mood"])
 
@@ -23,6 +26,9 @@ def store_mood(data: MoodStoreRequest, current_child: TokenData = Depends(get_cu
     """
     Store mood data (protected endpoint - child JWT required)
     
+    NEW: Enforces one mood per day per child.
+    If mood already exists for today, returns "already_exists" status.
+    
     After storing, checks if alert should be sent based on:
     - 7-day bad mood count >= threshold
     - Child has enabled alerts_consent
@@ -34,23 +40,46 @@ def store_mood(data: MoodStoreRequest, current_child: TokenData = Depends(get_cu
     from app.services.email_service import send_mood_alert
     from app.core.config import BAD_MOOD_THRESHOLD
     from bson import ObjectId
+    from app.services.mood_service import create_daily_mood_if_not_exists
     
-    # Store mood with child_id from JWT token
-    mood_doc = {
-        "child_id": ObjectId(current_child.id),
-        "mood": data.mood,
-        "datetime": data.datetime
-    }
+    logger.debug(f"POST /mood/store - child_id: {current_child.id}, mood: {data.mood}, datetime: {data.datetime}")
     
-    result = moods_col.insert_one(mood_doc)
-    mood_doc["_id"] = result.inserted_id
+    # NEW: Use create_daily_mood_if_not_exists to enforce one mood per day
+    created, mood_doc = create_daily_mood_if_not_exists(
+        child_id=current_child.id,
+        mood=data.mood,
+        dt=data.datetime
+    )
     
-    # Check if alert should be sent
+    # If mood already exists for today, return early with "already_exists" status
+    if not created:
+        logger.info(f"Mood already exists for child {current_child.id} - returning 'already_exists' status")
+        return {
+            "status": "already_exists",
+            "message": "Mood already recorded for today",
+            "data": {
+                "_id": str(mood_doc["_id"]),
+                "child_id": str(mood_doc["child_id"]),
+                "mood": mood_doc["mood"],
+                "datetime": mood_doc["datetime"],
+                "date_key": mood_doc["date_key"]
+            },
+            "alert_permission_needed": False,
+            "bad_mood_count": None
+        }
+    
+    # Mood successfully created - now check for alert logic
+    alert_permission_needed = False
+    bad_mood_count = 0
+    
+    logger.debug(f"Mood created successfully for child {current_child.id} - checking alert logic")
+    
     try:
         child = get_child_by_id(current_child.id)
         
+        # Only check if child exists AND has global consent enabled
         if child and child.get("alerts_consent", False):
-            # Count bad moods in last 7 days
+            # Count bad moods in last 7 days (now uses daily moods only)
             seven_days_ago = datetime.utcnow() - timedelta(days=7)
             
             bad_mood_count = moods_col.count_documents({
@@ -59,16 +88,23 @@ def store_mood(data: MoodStoreRequest, current_child: TokenData = Depends(get_cu
                 "datetime": {"$gte": seven_days_ago}
             })
             
-            # Send alert if threshold reached
+            logger.debug(f"Bad mood count for child {current_child.id}: {bad_mood_count} (threshold: {BAD_MOOD_THRESHOLD})")
+            
+            # NEW BEHAVIOR: Mark pending alert instead of sending immediately
             if bad_mood_count >= BAD_MOOD_THRESHOLD:
-                recipients = get_parent_and_trusted_emails(current_child.id)
+                logger.info(f"Bad mood threshold reached for child {current_child.id} - setting pending alert")
+                # Check if there's already a pending alert to avoid duplicates
+                pending_alert = child.get("pending_alert", {})
+                if not pending_alert.get("exists", False):
+                    # Mark alert as pending (requires student permission)
+                    from app.services.child_service import set_pending_alert
+                    set_pending_alert(current_child.id, bad_mood_count, mood_doc["_id"])
+                    logger.debug(f"Pending alert set for child {current_child.id}")
+                else:
+                    logger.debug(f"Pending alert already exists for child {current_child.id}")
                 
-                if recipients:
-                    send_mood_alert(
-                        recipients=recipients,
-                        child_name=child.get("name", "the child"),
-                        bad_mood_count=bad_mood_count
-                    )
+                # Signal to frontend that permission dialog should be shown
+                alert_permission_needed = True
     except Exception as e:
         # Log error but don't fail the mood storage
         print(f"Alert check failed: {str(e)}")
@@ -79,8 +115,11 @@ def store_mood(data: MoodStoreRequest, current_child: TokenData = Depends(get_cu
             "_id": str(mood_doc["_id"]),
             "child_id": str(mood_doc["child_id"]),
             "mood": mood_doc["mood"],
-            "datetime": mood_doc["datetime"]
-        }
+            "datetime": mood_doc["datetime"],
+            "date_key": mood_doc["date_key"]
+        },
+        "alert_permission_needed": alert_permission_needed,
+        "bad_mood_count": bad_mood_count if alert_permission_needed else None
     }
 
 @router.post("/predict")
@@ -105,6 +144,8 @@ def predict_question(data: MoodQuestionPredictRequest):
         "විශේෂ දෙයක් නෑ",
         "විශේෂ නැහැ",
         "එහෙම දෙයක් නෑ",
+        "එහෙම දෙයක් වුණේ නෑ",
+        "අද සාමාන්‍ය විදිහට වැඩ ටික සිද්ධ වුණා",
         "කමක් නෑ",
         "අවුලක් නෑ",
         "වැඩක් නෑ"
@@ -165,10 +206,11 @@ def predict_overall(data: MoodOverallRequest):
     """
     Predict overall mood based on 5 question answers using hybrid rule-based + ML approach.
     
-    Q1: Uses ML model prediction
-    Q2-Q4: YES answers indicate problems (negative score), NO = neutral
-    Q5: YES indicates happiness (positive score), NO = neutral
+    Q1: Uses ML model prediction (required by frontend, but backend handles empty safely)
+    Q2-Q5: YES answers indicate problems (negative score), NO = neutral, EMPTY = skipped
     Long descriptive answers use ML prediction with lower weight.
+    
+    Skipped questions (empty string) contribute: mood="Skipped", score=0, confidence=0.0
     
     Returns:
         JSON with final_mood, total_score, and per_question breakdown
@@ -218,30 +260,35 @@ def predict_overall(data: MoodOverallRequest):
             "confidence": 0.0
         }
         
+        # Check if question was skipped (empty after normalization)
+        # Skipped questions contribute 0 to scoring
+        if not normalized:
+            question_info["mood"] = "Skipped"
+            question_info["score"] = 0
+            question_info["confidence"] = 0.0
+            per_question.append(question_info)
+            continue  # Skip to next question
+        
         # Q1: Use ML model prediction
         if question_id == 1:
-            if not normalized:
-                question_info["mood"] = "Unknown"
-                question_info["score"] = 0
+            ml_result = predict_with_probs(answer_text)
+            mood = ml_result.get("mood", "Unknown")
+            confidence = ml_result.get("confidence", 0.0)
+            
+            # Map mood to score
+            if mood in ["Happy", "happy", "HAPPY"]:
+                score = 2
+            elif mood in ["Normal", "normal", "NORMAL"]:
+                score = 0
+            elif mood in ["Bad", "bad", "BAD"]:
+                score = -2
             else:
-                ml_result = predict_with_probs(answer_text)
-                mood = ml_result.get("mood", "Unknown")
-                confidence = ml_result.get("confidence", 0.0)
-                
-                # Map mood to score
-                if mood in ["Happy", "happy", "HAPPY"]:
-                    score = 2
-                elif mood in ["Normal", "normal", "NORMAL"]:
-                    score = 0
-                elif mood in ["Bad", "bad", "BAD"]:
-                    score = -2
-                else:
-                    score = 0
-                
-                question_info["mood"] = map_mood_to_sinhala(mood)
-                question_info["score"] = score
-                question_info["confidence"] = confidence
-                total_score += score
+                score = 0
+            
+            question_info["mood"] = map_mood_to_sinhala(mood)
+            question_info["score"] = score
+            question_info["confidence"] = confidence
+            total_score += score
         
         # Q2-Q4: YES = problems (negative), NO = neutral
         elif question_id in [2, 3, 4]:
@@ -263,7 +310,7 @@ def predict_overall(data: MoodOverallRequest):
             else:
                 # Long text or descriptive answer
                 word_count = len(normalized.split())
-                if word_count >= 3 and normalized:
+                if word_count >= 3:
                     # Use ML with lower weight
                     ml_result = predict_with_probs(answer_text)
                     mood = ml_result.get("mood", "Unknown")
@@ -303,7 +350,7 @@ def predict_overall(data: MoodOverallRequest):
             else:
                 # Long text or descriptive answer
                 word_count = len(normalized.split())
-                if word_count >= 3 and normalized:
+                if word_count >= 3:
                     # Use ML with lower weight
                     ml_result = predict_with_probs(answer_text)
                     mood = ml_result.get("mood", "Unknown")
@@ -329,7 +376,7 @@ def predict_overall(data: MoodOverallRequest):
         
         per_question.append(question_info)
     
-    # Determine final mood from total score
+    # Determine final mood from total score (unchanged thresholds)
     if total_score <= -3:
         final_mood = "Bad"
     elif -2 <= total_score <= 1:
@@ -342,6 +389,76 @@ def predict_overall(data: MoodOverallRequest):
         "total_score": total_score,
         "per_question": per_question
     }
+
+@router.post("/respond_alert_permission")
+def respond_alert_permission(
+    data: AlertPermissionResponse, 
+    current_child: TokenData = Depends(get_current_child)
+):
+    """
+    Student responds to alert permission request (NEW: per-incident permission)
+    
+    After /mood/store returns alert_permission_needed=true, frontend shows dialog.
+    Student approves or denies sending the alert email.
+    
+    Request body:
+    {
+        "approve": true   // or false
+    }
+    
+    If approved: sends email to parent + trusted contacts
+    If denied: no email sent
+    Either way: clears pending alert flag
+    """
+    from fastapi import HTTPException
+    from app.services.child_service import get_child_by_id, clear_pending_alert
+    from app.services.trusted_service import get_parent_and_trusted_emails
+    from app.services.email_service import send_mood_alert
+    
+    # Load child record
+    child = get_child_by_id(current_child.id)
+    
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+    
+    # Check if there's a pending alert
+    pending_alert = child.get("pending_alert", {})
+    
+    if not pending_alert.get("exists", False):
+        return {
+            "status": "success",
+            "message": "No pending alert to respond to"
+        }
+    
+    # Handle student's decision
+    if data.approve:
+        # Student APPROVED - send email alerts
+        recipients = get_parent_and_trusted_emails(current_child.id)
+        
+        if recipients:
+            send_mood_alert(
+                recipients=recipients,
+                child_name=child.get("name", "the child"),
+                bad_mood_count=pending_alert.get("bad_mood_count", 0)
+            )
+        
+        # Clear pending alert
+        clear_pending_alert(current_child.id)
+        
+        return {
+            "status": "success",
+            "message": "Alert sent to parent and trusted contacts",
+            "email_sent": True
+        }
+    else:
+        # Student DECLINED - do not send email
+        clear_pending_alert(current_child.id)
+        
+        return {
+            "status": "success",
+            "message": "Alert not sent (student declined)",
+            "email_sent": False
+        }
 
 
 # ============================================================================
