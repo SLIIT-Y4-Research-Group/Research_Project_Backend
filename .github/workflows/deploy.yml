@@ -1,0 +1,30 @@
+name: Deploy Backend to EC2
+
+on:
+  push:
+    branches:
+      - Deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy on EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/Research_Project_Backend
+
+            git fetch --all
+            git reset --hard origin/Deploy
+
+            docker compose down
+            docker compose up -d --build
+
+            docker image prune -f
+
+            docker ps
