@@ -1,150 +1,102 @@
-# app/services/emotion_model_service.py
-import numpy as np
 import os
+from functools import lru_cache
+from typing import Tuple
+
+import numpy as np
 from PIL import Image
+import torch
+import timm
+from torchvision import transforms
 
-# Use DeepFace or Hugging Face for emotion detection (pre-trained models)
-from deepface import DeepFace
+from app.core.config import EMOTION_MODEL_PATH
 
-# Image size (DeepFace handles resizing internally)
 IMG_SIZE = 224
-
-# Emotion labels
-EMOTION_LABELS = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
-
-_HF_EMOTION_PIPELINE = None
-
-_HF_LABEL_ALIASES = {
-    "angry": ["angry", "anger", "mad"],
-    "disgust": ["disgust", "disgusted"],
-    "fear": ["fear", "fearful", "scared"],
-    "happy": ["happy", "happiness", "joy", "smile"],
-    "neutral": ["neutral", "calm", "normal"],
-    "sad": ["sad", "sadness", "unhappy"],
-    "surprise": ["surprise", "surprised"],
-}
+EMOTION_LABELS = ["sad", "happy"]
 
 
-def _get_emotion_provider():
-    provider = os.getenv("EMOTION_PROVIDER", "deepface").strip().lower()
-    return provider if provider in {"deepface", "huggingface"} else "deepface"
+@lru_cache(maxsize=1)
+def load_emotion_model(model_path: str = EMOTION_MODEL_PATH):
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Emotion model not found at: {model_path}")
+
+    checkpoint = torch.load(model_path, map_location="cpu")
+
+    model = timm.create_model(
+        "densenet121",
+        pretrained=False,
+        num_classes=2
+    )
+
+    state_dict = checkpoint.get("model_state_dict", checkpoint)
+    model.load_state_dict(state_dict)
+    model.eval()
+
+    class_to_idx = checkpoint.get("class_to_idx", {"sad": 0, "happy": 1})
+    idx_to_class = checkpoint.get(
+        "idx_to_class",
+        {v: k for k, v in class_to_idx.items()}
+    )
+
+    if isinstance(list(idx_to_class.keys())[0], str):
+        idx_to_class = {int(k): v for k, v in idx_to_class.items()}
+
+    return {
+        "model": model,
+        "class_to_idx": class_to_idx,
+        "idx_to_class": idx_to_class
+    }
 
 
-def _get_hf_emotion_pipeline():
-    global _HF_EMOTION_PIPELINE
-    if _HF_EMOTION_PIPELINE is not None:
-        return _HF_EMOTION_PIPELINE
-
-    from transformers import pipeline
-
-    model_name = os.getenv("EMOTION_MODEL_NAME", "").strip()
-    if not model_name:
-        return None
-
-    _HF_EMOTION_PIPELINE = pipeline("image-classification", model=model_name)
-    return _HF_EMOTION_PIPELINE
+def _get_transform():
+    return transforms.Compose([
+        transforms.Resize((IMG_SIZE, IMG_SIZE)),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225]
+        ),
+    ])
 
 
-def _map_hf_label_to_emotion(label):
-    label_lower = label.lower()
-    for target, aliases in _HF_LABEL_ALIASES.items():
-        if any(alias in label_lower for alias in aliases):
-            return target
-    return None
+def predict_emotion(input_data: np.ndarray) -> Tuple[int, float]:
+    loaded = load_emotion_model()
+    model = loaded["model"]
 
-
-def _predict_emotion_hf(input_data):
-    pipeline_fn = _get_hf_emotion_pipeline()
-    if pipeline_fn is None:
-        raise RuntimeError("Hugging Face emotion model is not configured. Set EMOTION_MODEL_NAME.")
-
-    pil_image = Image.fromarray(input_data)
-    results = pipeline_fn(pil_image)
-    if not isinstance(results, list):
-        results = [results]
-
-    best_label = None
-    best_score = -1.0
-    for item in results:
-        label = item.get("label", "")
-        score = float(item.get("score", 0))
-        mapped = _map_hf_label_to_emotion(label)
-        if mapped and score > best_score:
-            best_label = mapped
-            best_score = score
-
-    if best_label is None:
-        return 4, 0.5
-
-    return EMOTION_LABELS.index(best_label), max(0.0, min(1.0, best_score))
-
-
-def predict_emotion(input_data):
-    """
-    Predict emotion from input data using DeepFace or Hugging Face.
-    Input should be an image as numpy array (H, W, 3) with values 0-255 or 0-1.
-    """
-    # Ensure correct input shape
     if len(input_data.shape) == 2:
-        # If 2D (H, W), add channel dimension
         input_data = np.expand_dims(input_data, axis=-1)
-    
+
     if input_data.shape[-1] == 1:
-        # If grayscale, convert to RGB
         input_data = np.concatenate([input_data] * 3, axis=-1)
-    
-    # Ensure uint8 format for DeepFace
-    if input_data.max() <= 1.0:
-        input_data = (input_data * 255).astype(np.uint8)
-    else:
-        input_data = input_data.astype(np.uint8)
-    
-    provider = _get_emotion_provider()
 
-    if provider == "huggingface":
-        try:
-            return _predict_emotion_hf(input_data)
-        except Exception as e:
-            print(f"Hugging Face error: {e}")
-            # Fallback to DeepFace if HF fails
-
-    try:
-        # Use DeepFace to analyze emotion
-        result = DeepFace.analyze(
-            input_data,
-            actions=['emotion'],
-            enforce_detection=False,  # Don't fail if face not detected
-            silent=True
-        )
-
-        # Handle list result (multiple faces) - take first face
-        if isinstance(result, list):
-            result = result[0]
-
-        # Get emotion predictions
-        emotions = result.get('emotion', {})
-        dominant_emotion = result.get('dominant_emotion', 'neutral')
-
-        # Map to our label format
-        emotion_label = dominant_emotion.lower()
-        if emotion_label in EMOTION_LABELS:
-            emotion_idx = EMOTION_LABELS.index(emotion_label)
+    if input_data.dtype != np.uint8:
+        if input_data.max() <= 1.0:
+            input_data = (input_data * 255).astype(np.uint8)
         else:
-            emotion_idx = 4  # default to neutral
-            emotion_label = 'neutral'
+            input_data = input_data.astype(np.uint8)
 
-        # Get confidence (DeepFace returns percentages)
-        confidence = emotions.get(dominant_emotion, 0) / 100.0
+    image = Image.fromarray(input_data).convert("RGB")
+    tensor = _get_transform()(image).unsqueeze(0)
 
-        return emotion_idx, confidence
+    with torch.no_grad():
+        logits = model(tensor)
+        probs = torch.softmax(logits, dim=1)[0]
 
-    except Exception as e:
-        print(f"DeepFace error: {e}")
-        # Fallback to neutral
-        return 4, 0.5
+    pred_idx = int(torch.argmax(probs).item())
+    confidence = float(probs[pred_idx].item())
+    return pred_idx, confidence
 
-def predict_emotion_with_label(input_data):
-    """Predict emotion and return both index and label."""
+
+def predict_emotion_with_label(input_data: np.ndarray):
+    loaded = load_emotion_model()
+    idx_to_class = loaded["idx_to_class"]
+
     emotion_idx, confidence = predict_emotion(input_data)
-    emotion_label = EMOTION_LABELS[emotion_idx] if emotion_idx < len(EMOTION_LABELS) else "unknown"
+    emotion_label = idx_to_class.get(emotion_idx, EMOTION_LABELS[emotion_idx]).lower()
+
+    if emotion_label not in ("happy", "sad"):
+        if "happy" in emotion_label:
+            emotion_label = "happy"
+        else:
+            emotion_label = "sad"
+
     return emotion_idx, emotion_label, confidence
