@@ -260,9 +260,24 @@ def store_mood(data: MoodStoreRequest, current_child: TokenData = Depends(get_cu
     
     try:
         child = get_child_by_id(current_child.id)
-        
+
         # Only check if child exists AND has global consent enabled
         if child and child.get("alerts_consent", False):
+            mood_value = str(mood_doc.get("mood", "")).lower()
+            if mood_value != "bad":
+                return {
+                    "status": "success",
+                    "data": {
+                        "_id": str(mood_doc["_id"]),
+                        "child_id": str(mood_doc["child_id"]),
+                        "mood": mood_doc["mood"],
+                        "datetime": mood_doc["datetime"],
+                        "date_key": mood_doc["date_key"]
+                    },
+                    "alert_permission_needed": False,
+                    "bad_mood_count": None
+                }
+
             # Count bad moods in last 7 days using date_key (timezone-consistent)
             from app.services.mood_service import get_today_date_key, get_date_key_from_datetime
             today_key = get_today_date_key()

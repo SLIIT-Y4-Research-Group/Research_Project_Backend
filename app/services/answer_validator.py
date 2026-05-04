@@ -37,6 +37,7 @@ NEUTRAL_PHRASES = {
     "විශේෂ දෙයක් නැහැ",
     "අද විශේෂ දෙයක් නෑ",
     "අද එහෙම විශේෂ දෙයක් නෑ",
+    "එහෙම විශේෂ දෙයක් වුණේ නෑ"
 }
 
 # Q1 Neutral Phrases - reuse NEUTRAL_PHRASES for Q1 "no issue" answers
@@ -111,7 +112,7 @@ USE_OPTION_B_FALLBACK = True
 
 GENERAL_STUDENT_SIGNALS = {
     # School/day context
-    "අද", "ඊයේ", "දවස", "school", "class", "පාසල", "ඉස්කෝලේ", "period",
+    "අද", "ඊයේ", "දවස", "school", "class", "පාසල", "ඉස්කෝලේ", "period","චොකලට්",
     # People and social context
     "යාළුව", "friend", "teacher", "sir", "miss", "classmate", "කට්ටිය",
     # Emotional / interpersonal experience
@@ -449,49 +450,3 @@ def validate_answer(question_id: int, text: str) -> dict:
     }
 
 
-# ============================================================================
-# TEST EXAMPLES (Expected Behavior)
-# ============================================================================
-# Q1 Direct Mood Examples:
-# validate_answer(1, "හොඳයි") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Happy"}
-# validate_answer(1, "සතුටුයි") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Happy"}
-# validate_answer(1, "නරකයි") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Bad"}
-# validate_answer(1, "දුකයි") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Bad"}
-# validate_answer(1, "හොඳ නෑ") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Bad"}
-# validate_answer(1, "සාමාන්‍යයි") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Normal"}
-# validate_answer(1, "හරි") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Normal"}
-#
-# Q1 Neutral Phrases ("no issue" answers):
-# validate_answer(1, "මොකුත් නෑ") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Normal"}
-# validate_answer(1, "එහෙම විශේෂ දෙයක් නෑ") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Normal"}
-# validate_answer(1, "ගැටලුවක් නෑ") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Normal"}
-#
-# Q1 Longer Answers:
-# validate_answer(1, "අද දවස හොඳයි මට සතුටුයි") -> {"status": "VALID_TEXT"}
-# validate_answer(1, "අද ටිකක් මහන්සියි") -> {"status": "VALID_TEXT"}
-# validate_answer(1, "අද ඉස්කෝලේ දවස හොඳයි") -> {"status": "VALID_TEXT"}
-# validate_answer(1, "අද මට ටිකක් ආතතියක් තිබුණා") -> {"status": "VALID_TEXT"}
-#
-# Q1 Invalid:
-# validate_answer(1, "ඔව්") -> {"status": "NEED_MORE_INFO"} (yes/no not allowed)
-# validate_answer(1, "xyz") -> {"status": "NEED_MORE_INFO"} (too short, no mood word)
-#
-# Q1 Irrelevant (no mood/day signals):
-# validate_answer(1, "මම පාන් කෑවා") -> {"status": "IRRELEVANT"}
-# validate_answer(1, "අද මම වාහනයෙන් ගියා") -> {"status": "IRRELEVANT"}
-# validate_answer(1, "මම පොතක් ගත්තා") -> {"status": "IRRELEVANT"}
-#
-# Q2-Q5 YES/NO (unchanged behavior):
-# validate_answer(2, "ඔව්") -> {"status": "YES_NO"}
-# validate_answer(2, "නෑ") -> {"status": "YES_NO"}
-#
-# Q2-Q5 Descriptive:
-# validate_answer(2, "යාළුවා එක්ක රණ්ඩු වුණා") -> {"status": "VALID_TEXT"}
-# validate_answer(2, "අද කෑම කෑවා") -> {"status": "IRRELEVANT"} (no keywords)
-#
-# Q2-Q5 Neutral Phrases (valid "no issue" answers):
-# validate_answer(2, "එහෙම විශේෂ දෙයක් නෑ") -> {"status": "VALID_TEXT"}
-# validate_answer(2, "ගැටලුවක් නෑ") -> {"status": "VALID_TEXT"}
-# validate_answer(3, "කිසිම දෙයක් නෑ") -> {"status": "VALID_TEXT"}
-# validate_answer(4, "අවුලක් නෑ") -> {"status": "VALID_TEXT"}
-# validate_answer(5, "මොකුත් නෑ") -> {"status": "VALID_TEXT"}
