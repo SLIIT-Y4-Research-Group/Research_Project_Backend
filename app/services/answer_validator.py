@@ -32,7 +32,12 @@ NEUTRAL_PHRASES = {
     "එහෙම දෙයක් නෑ",
     "එම විශේෂ දෙයක් නෑ",
     "එහෙම අවුලක් තිබ්බේ නෑ",
-    "එම අවුලක් තිබ්බේ නෑ"
+    "එම අවුලක් තිබ්බේ නෑ",
+    "විශේෂ දෙයක් නෑ",
+    "විශේෂ දෙයක් නැහැ",
+    "අද විශේෂ දෙයක් නෑ",
+    "අද එහෙම විශේෂ දෙයක් නෑ",
+    "එහෙම විශේෂ දෙයක් වුණේ නෑ"
 }
 
 # Q1 Neutral Phrases - reuse NEUTRAL_PHRASES for Q1 "no issue" answers
@@ -101,6 +106,27 @@ KEYWORDS = {
     ]
 }
 
+# Option B fallback relevance for Q2-Q5.
+# Keep this separate and configurable so we can easily switch back to Option A.
+USE_OPTION_B_FALLBACK = True
+
+GENERAL_STUDENT_SIGNALS = {
+    # School/day context
+    "අද", "ඊයේ", "දවස", "school", "class", "පාසල", "ඉස්කෝලේ", "period","චොකලට්",
+    # People and social context
+    "යාළුව", "friend", "teacher", "sir", "miss", "classmate", "කට්ටිය",
+    # Emotional / interpersonal experience
+    "දුක", "අමාරු", "කනගාටු", "පාළු", "තනි", "තනිවෙලා", "ලැජ්ජා",
+    "බය", "වෙහෙස", "මහන්සි", "stress", "pressure", "worry", "worried",
+    "ignore", "ignored", "left out", "bully", "bullied", "exclude", "excluded",
+    # Struggle / coping
+    "හිත", "මනස", "focus", "attention", "concentrate", "අවධානය",
+    "support", "help", "comfort", "encourage", "encouragement",
+    # Positive events / happiness
+    "සතුටු", "happy", "good", "fun", "විනෝද", "හිනා", "ප්‍රීති",
+    "gift", "prize", "reward", "praise", "win", "good news", "positive"
+}
+
 
 def normalize_text(text: str) -> str:
     """
@@ -167,6 +193,26 @@ def starts_with_yes_no(normalized_text: str) -> tuple[bool, str]:
     return (False, "")
 
 
+def get_yn_value(normalized_text: str) -> str | None:
+    """
+    Classify normalized text as explicit YES/NO value using shared token sets.
+
+    Returns:
+        "YES" | "NO" | None
+    """
+    if not normalized_text:
+        return None
+
+    tokens = normalized_text.split()
+    first_token = tokens[0] if tokens else ""
+
+    if normalized_text in YES_WORDS or first_token in YES_WORDS:
+        return "YES"
+    if normalized_text in NO_WORDS or first_token in NO_WORDS:
+        return "NO"
+    return None
+
+
 def contains_keyword(normalized_text: str, question_id: int) -> bool:
     """
     Check if the text contains any relevant keyword for the given question.
@@ -225,6 +271,15 @@ def contains_q1_signal(normalized_text: str) -> bool:
     return False
 
 
+def contains_general_student_signal(normalized_text: str) -> bool:
+    """
+    Option B fallback relevance for Q2-Q5.
+    Broad signal check for meaningful student experiences, emotions,
+    interpersonal situations, school context, and positive/negative incidents.
+    """
+    return any(signal in normalized_text for signal in GENERAL_STUDENT_SIGNALS)
+
+
 def validate_answer(question_id: int, text: str) -> dict:
     """
     Validate student answer for relevance and informativeness.
@@ -235,7 +290,7 @@ def validate_answer(question_id: int, text: str) -> dict:
         
     Returns:
         dict with keys:
-            - status: "EMPTY" | "YES_NO" | "NEED_MORE_INFO" | "IRRELEVANT" | "VALID_TEXT" | "Q1_DIRECT_MOOD"
+            - status: "EMPTY" | "YES_NO" | "NEED_MORE_INFO" | "IRRELEVANT" | "VALID_TEXT" | "Q1_DIRECT_MOOD" | "NEUTRAL_PHRASE"
             - normalized: normalized text
             - is_yes_no: boolean indicating if answer is yes/no
             - direct_mood: (optional) "Happy" | "Normal" | "Bad" - only present when status is "Q1_DIRECT_MOOD"
@@ -294,10 +349,12 @@ def validate_answer(question_id: int, text: str) -> dict:
     if question_id in [2, 3, 4, 5]:
         yn, first_token = starts_with_yes_no(normalized)
         if yn:
+            yn_value = get_yn_value(first_token)
             return {
                 "status": "YES_NO",
                 "normalized": first_token,
-                "is_yes_no": True
+                "is_yes_no": True,
+                "yn_value": yn_value
             }
     
     # Check if it's a yes/no answer
@@ -305,10 +362,12 @@ def validate_answer(question_id: int, text: str) -> dict:
     
     # For Q2-Q5, YES_NO is acceptable
     if is_yes_no and question_id in [2, 3, 4, 5]:
+        yn_value = get_yn_value(normalized)
         return {
             "status": "YES_NO",
             "normalized": normalized,
-            "is_yes_no": True
+            "is_yes_no": True,
+            "yn_value": yn_value
         }
     
     # For Q1, YES_NO is not acceptable (need descriptive answer)
@@ -333,9 +392,10 @@ def validate_answer(question_id: int, text: str) -> dict:
         for phrase in NEUTRAL_PHRASES:
             if phrase in normalized:
                 return {
-                    "status": "VALID_TEXT",
+                    "status": "NEUTRAL_PHRASE",
                     "normalized": normalized,
-                    "is_yes_no": False
+                    "is_yes_no": False,
+                    "direct_mood": "Normal"
                 }
     
     # Count words
@@ -358,14 +418,29 @@ def validate_answer(question_id: int, text: str) -> dict:
                 "is_yes_no": False
             }
     
-    # For Q2-Q5, check keyword relevance
+    # For Q2-Q5, use 2-step relevance check:
+    # 1) Existing KEYWORDS first (strict, backward-compatible)
+    # 2) Option B fallback relevance (broad student-signal check)
     if question_id in [2, 3, 4, 5]:
-        if not contains_keyword(normalized, question_id):
+        if contains_keyword(normalized, question_id):
             return {
-                "status": "IRRELEVANT",
+                "status": "VALID_TEXT",
                 "normalized": normalized,
                 "is_yes_no": False
             }
+
+        if USE_OPTION_B_FALLBACK and contains_general_student_signal(normalized):
+            return {
+                "status": "VALID_TEXT",
+                "normalized": normalized,
+                "is_yes_no": False
+            }
+
+        return {
+            "status": "IRRELEVANT",
+            "normalized": normalized,
+            "is_yes_no": False
+        }
     
     # If we reach here, the answer is valid
     return {
@@ -375,49 +450,3 @@ def validate_answer(question_id: int, text: str) -> dict:
     }
 
 
-# ============================================================================
-# TEST EXAMPLES (Expected Behavior)
-# ============================================================================
-# Q1 Direct Mood Examples:
-# validate_answer(1, "හොඳයි") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Happy"}
-# validate_answer(1, "සතුටුයි") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Happy"}
-# validate_answer(1, "නරකයි") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Bad"}
-# validate_answer(1, "දුකයි") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Bad"}
-# validate_answer(1, "හොඳ නෑ") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Bad"}
-# validate_answer(1, "සාමාන්‍යයි") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Normal"}
-# validate_answer(1, "හරි") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Normal"}
-#
-# Q1 Neutral Phrases ("no issue" answers):
-# validate_answer(1, "මොකුත් නෑ") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Normal"}
-# validate_answer(1, "එහෙම විශේෂ දෙයක් නෑ") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Normal"}
-# validate_answer(1, "ගැටලුවක් නෑ") -> {"status": "Q1_DIRECT_MOOD", "direct_mood": "Normal"}
-#
-# Q1 Longer Answers:
-# validate_answer(1, "අද දවස හොඳයි මට සතුටුයි") -> {"status": "VALID_TEXT"}
-# validate_answer(1, "අද ටිකක් මහන්සියි") -> {"status": "VALID_TEXT"}
-# validate_answer(1, "අද ඉස්කෝලේ දවස හොඳයි") -> {"status": "VALID_TEXT"}
-# validate_answer(1, "අද මට ටිකක් ආතතියක් තිබුණා") -> {"status": "VALID_TEXT"}
-#
-# Q1 Invalid:
-# validate_answer(1, "ඔව්") -> {"status": "NEED_MORE_INFO"} (yes/no not allowed)
-# validate_answer(1, "xyz") -> {"status": "NEED_MORE_INFO"} (too short, no mood word)
-#
-# Q1 Irrelevant (no mood/day signals):
-# validate_answer(1, "මම පාන් කෑවා") -> {"status": "IRRELEVANT"}
-# validate_answer(1, "අද මම වාහනයෙන් ගියා") -> {"status": "IRRELEVANT"}
-# validate_answer(1, "මම පොතක් ගත්තා") -> {"status": "IRRELEVANT"}
-#
-# Q2-Q5 YES/NO (unchanged behavior):
-# validate_answer(2, "ඔව්") -> {"status": "YES_NO"}
-# validate_answer(2, "නෑ") -> {"status": "YES_NO"}
-#
-# Q2-Q5 Descriptive:
-# validate_answer(2, "යාළුවා එක්ක රණ්ඩු වුණා") -> {"status": "VALID_TEXT"}
-# validate_answer(2, "අද කෑම කෑවා") -> {"status": "IRRELEVANT"} (no keywords)
-#
-# Q2-Q5 Neutral Phrases (valid "no issue" answers):
-# validate_answer(2, "එහෙම විශේෂ දෙයක් නෑ") -> {"status": "VALID_TEXT"}
-# validate_answer(2, "ගැටලුවක් නෑ") -> {"status": "VALID_TEXT"}
-# validate_answer(3, "කිසිම දෙයක් නෑ") -> {"status": "VALID_TEXT"}
-# validate_answer(4, "අවුලක් නෑ") -> {"status": "VALID_TEXT"}
-# validate_answer(5, "මොකුත් නෑ") -> {"status": "VALID_TEXT"}
