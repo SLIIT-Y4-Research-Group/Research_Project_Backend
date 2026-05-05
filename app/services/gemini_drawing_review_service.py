@@ -1,65 +1,123 @@
 import io
 import json
-from typing import Dict, Any, List
+import time
+import random
+from typing import Dict, Any, List, Tuple
 from PIL import Image
 from google import genai
 
 from app.core.config import (
-    GEMINI_API_KEY,
-    GEMINI_API_KEY_2,
+    GEMINI_API_KEYS,
     GEMINI_MODEL,
     ENABLE_GEMINI_REVIEW,
 )
 
-_clients: List[genai.Client] = []
-if GEMINI_API_KEY:
-    _clients.append(genai.Client(api_key=GEMINI_API_KEY))
-if GEMINI_API_KEY_2:
-    _clients.append(genai.Client(api_key=GEMINI_API_KEY_2))
+_clients: List[Tuple[int, genai.Client]] = []
+
+for index, api_key in enumerate(GEMINI_API_KEYS, start=1):
+    try:
+        _clients.append((index, genai.Client(api_key=api_key)))
+    except Exception as e:
+        print(f"[Gemini] Failed to initialize key_{index}: {e}")
+
+_current_key_index = 0
+_blocked_keys: Dict[int, float] = {}
+
+RATE_LIMIT_COOLDOWN_SECONDS = 90
+MAX_RETRIES_PER_KEY = 1
 
 
-def build_fallback_description(payload: dict) -> dict:
-    return {
-        "review_enabled": False,
-        "final_emotion": payload.get("emotion_guess", "sad"),
-        "confidence_level": "low",
-        "reason": "Gemini review unavailable, used fallback interpretation.",
-        "detected_objects": [],
-        "missed_objects": [],
-        "color_analysis": {
-            "dominant_colors": payload.get("color", {}).get("tags", []),
-            "palette_mood": "unknown",
-            "interpretation": ["Fallback mode used; detailed multimodal interpretation unavailable."],
-        },
-        "spatial_analysis": {
-            "layout_type": "unknown",
-            "placement_notes": [],
-            "relationship_notes": [],
-        },
-        "emotional_condition": "Fallback interpretation only; please review manually.",
-        "description": (
-            "Fallback mode was used because Gemini review was unavailable. "
-            "Please review the drawing manually."
-        ),
-    }
+def _is_rate_limit_error(error_text: str) -> bool:
+    text = error_text.lower()
+    return (
+        "429" in text
+        or "quota" in text
+        or "rate limit" in text
+        or "resource_exhausted" in text
+        or "too many requests" in text
+    )
+
+
+def _is_key_temporarily_blocked(key_number: int) -> bool:
+    blocked_until = _blocked_keys.get(key_number)
+    if blocked_until is None:
+        return False
+
+    if time.time() >= blocked_until:
+        _blocked_keys.pop(key_number, None)
+        return False
+
+    return True
+
+
+def _mark_key_blocked(key_number: int):
+    _blocked_keys[key_number] = time.time() + RATE_LIMIT_COOLDOWN_SECONDS
+    print(
+        f"[Gemini] key_{key_number} temporarily blocked for "
+        f"{RATE_LIMIT_COOLDOWN_SECONDS}s due to rate/quota limit"
+    )
+
+
+def _ordered_clients_for_failover() -> List[Tuple[int, genai.Client]]:
+    global _current_key_index
+
+    if not _clients:
+        return []
+
+    ordered = []
+
+    for offset in range(len(_clients)):
+        idx = (_current_key_index + offset) % len(_clients)
+        ordered.append(_clients[idx])
+
+    _current_key_index = (_current_key_index + 1) % len(_clients)
+
+    return ordered
 
 
 def _call_gemini_with_failover(contents):
     if not _clients:
         raise RuntimeError("No Gemini API keys configured.")
+
     errors = []
-    for idx, client in enumerate(_clients, start=1):
-        try:
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=contents,
-            )
-            return (response.text or "").strip()
-        except Exception as e:
-            errors.append(f"key_{idx}: {str(e)}")
-    raise RuntimeError(" | ".join(errors))
 
+    for key_number, client in _ordered_clients_for_failover():
+        if _is_key_temporarily_blocked(key_number):
+            errors.append(f"key_{key_number}: skipped because cooldown active")
+            continue
 
+        for attempt in range(1, MAX_RETRIES_PER_KEY + 1):
+            try:
+                print(
+                    f"[Gemini] Trying key_{key_number}, "
+                    f"attempt {attempt}, model={GEMINI_MODEL}"
+                )
+
+                response = client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=contents,
+                )
+
+                text = (response.text or "").strip()
+
+                if not text:
+                    raise RuntimeError("Gemini returned empty response")
+
+                print(f"[Gemini] Success with key_{key_number}")
+                return text
+
+            except Exception as e:
+                error_text = str(e)
+                errors.append(f"key_{key_number}: {error_text}")
+                print(f"[Gemini] Error with key_{key_number}: {error_text}")
+
+                if _is_rate_limit_error(error_text):
+                    _mark_key_blocked(key_number)
+                    break
+
+                time.sleep(0.8 + random.random())
+
+    raise RuntimeError("All Gemini API keys failed: " + " | ".join(errors))
 # ─── Prompt for SCAN / UPLOAD (uses CV analysis data + image) ───────────────
 
 SCAN_PROMPT_TEMPLATE = """
