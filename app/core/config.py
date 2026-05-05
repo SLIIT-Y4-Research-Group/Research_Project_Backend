@@ -47,5 +47,22 @@ CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_API_KEY_2 = os.getenv("GEMINI_API_KEY_2", "")
+GEMINI_API_KEY_3 = os.getenv("GEMINI_API_KEY_3", "")
+GEMINI_API_KEY_4 = os.getenv("GEMINI_API_KEY_4", "")
+GEMINI_API_KEY_5 = os.getenv("GEMINI_API_KEY_5", "")
+GEMINI_API_KEY_6 = os.getenv("GEMINI_API_KEY_6", "")
+
+GEMINI_API_KEYS = [
+    key for key in [
+        GEMINI_API_KEY,
+        GEMINI_API_KEY_2,
+        GEMINI_API_KEY_3,
+        GEMINI_API_KEY_4,
+        GEMINI_API_KEY_5,
+        GEMINI_API_KEY_6,
+    ]
+    if key and key.strip()
+]
+
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 ENABLE_GEMINI_REVIEW = os.getenv("ENABLE_GEMINI_REVIEW", "true").lower() == "true"
