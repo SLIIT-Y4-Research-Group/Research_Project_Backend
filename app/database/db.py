@@ -17,6 +17,7 @@ children_col = db["children"]
 trusted_contacts_col = db["trusted_contacts"]
 moods_col = db["moods"]
 tracks_col = db["tracks"]
+music_sessions_col = db["music_sessions"]
 leaderboard_col = db["leaderboard"]
 
 # Create indexes
@@ -40,6 +41,11 @@ def create_indexes():
 
         # Tracks: index for created_at for sorting
         tracks_col.create_index([("created_at", ASCENDING)])
+        
+        # Music sessions: indexes for personalization queries
+        music_sessions_col.create_index([("user_id", ASCENDING), ("ended_at", DESCENDING)])
+        music_sessions_col.create_index([("track_id", ASCENDING)])
+        music_sessions_col.create_index([("user_id", ASCENDING), ("track_id", ASCENDING)])
 
         # Leaderboard: indexes for sorting and player lookup
         leaderboard_col.create_index([("score", DESCENDING)])

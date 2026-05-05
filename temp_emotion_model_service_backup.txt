@@ -1,10 +1,6 @@
 # app/services/emotion_model_service.py
 import numpy as np
 import os
-import tempfile
-import urllib.request
-import shutil
-import h5py
 from PIL import Image
 
 # Use DeepFace or Hugging Face for emotion detection (pre-trained models)
@@ -15,12 +11,11 @@ IMG_SIZE = 224
 
 # Emotion labels
 EMOTION_LABELS = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
-DEFAULT_LOCAL_MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "face_emotion_model.h5")
+MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "face_emotion_model.h5")
 
 _HF_EMOTION_PIPELINE = None
 _FACE_EMOTION_MODEL = None
 _FACE_EMOTION_MODEL_LOAD_ATTEMPTED = False
-_DOWNLOADED_MODEL_PATH = None
 
 _HF_LABEL_ALIASES = {
     "angry": ["angry", "anger", "mad"],
@@ -87,61 +82,17 @@ def _predict_emotion_hf(input_data):
     return EMOTION_LABELS.index(best_label), max(0.0, min(1.0, best_score))
 
 def _get_face_emotion_model():
-    global _FACE_EMOTION_MODEL, _FACE_EMOTION_MODEL_LOAD_ATTEMPTED, _DOWNLOADED_MODEL_PATH
+    global _FACE_EMOTION_MODEL, _FACE_EMOTION_MODEL_LOAD_ATTEMPTED
     if _FACE_EMOTION_MODEL_LOAD_ATTEMPTED:
         return _FACE_EMOTION_MODEL
 
     _FACE_EMOTION_MODEL_LOAD_ATTEMPTED = True
     try:
         from tensorflow.keras.models import load_model
-
-        is_production = os.getenv("PRODUCTION", "false").strip().lower() == "true"
-        local_model_path = os.getenv("LOCAL_MODEL_PATH", DEFAULT_LOCAL_MODEL_PATH).strip() or DEFAULT_LOCAL_MODEL_PATH
-        aws_model_path = os.getenv("AWS_MODEL_PATH", "").strip()
-
-        model_source = local_model_path
-        if is_production and aws_model_path:
-            model_source = aws_model_path
-
-        if model_source.startswith("http://") or model_source.startswith("https://"):
-            model_filename = os.path.basename(model_source) or "face_emotion_model.h5"
-            download_path = os.path.join(tempfile.gettempdir(), model_filename)
-            urllib.request.urlretrieve(model_source, download_path)
-            _DOWNLOADED_MODEL_PATH = download_path
-            try:
-                _FACE_EMOTION_MODEL = load_model(download_path, compile=False)
-            except Exception as load_err:
-                if "batch_shape" not in str(load_err):
-                    raise
-                patched_path = os.path.join(tempfile.gettempdir(), f"patched_{model_filename}")
-                shutil.copyfile(download_path, patched_path)
-                with h5py.File(patched_path, "r+") as f:
-                    if "model_config" in f.attrs:
-                        cfg = f.attrs["model_config"]
-                        if isinstance(cfg, bytes):
-                            cfg = cfg.decode("utf-8")
-                        cfg = cfg.replace('"batch_shape"', '"batch_input_shape"')
-                        f.attrs["model_config"] = cfg.encode("utf-8")
-                _DOWNLOADED_MODEL_PATH = patched_path
-                _FACE_EMOTION_MODEL = load_model(patched_path, compile=False)
-        elif os.path.exists(model_source):
-            try:
-                _FACE_EMOTION_MODEL = load_model(model_source, compile=False)
-            except Exception as load_err:
-                if "batch_shape" not in str(load_err):
-                    raise
-                patched_path = os.path.join(tempfile.gettempdir(), "patched_local_face_emotion_model.h5")
-                shutil.copyfile(model_source, patched_path)
-                with h5py.File(patched_path, "r+") as f:
-                    if "model_config" in f.attrs:
-                        cfg = f.attrs["model_config"]
-                        if isinstance(cfg, bytes):
-                            cfg = cfg.decode("utf-8")
-                        cfg = cfg.replace('"batch_shape"', '"batch_input_shape"')
-                        f.attrs["model_config"] = cfg.encode("utf-8")
-                _FACE_EMOTION_MODEL = load_model(patched_path, compile=False)
+        if os.path.exists(MODEL_PATH):
+            _FACE_EMOTION_MODEL = load_model(MODEL_PATH, compile=False)
         else:
-            print(f"face_emotion_model.h5 not found at: {model_source}")
+            print(f"face_emotion_model.h5 not found at: {MODEL_PATH}")
     except Exception as e:
         print(f"Failed to load face_emotion_model.h5: {e}")
         _FACE_EMOTION_MODEL = None
@@ -202,32 +153,41 @@ def predict_emotion(input_data):
             return _predict_emotion_hf(input_data)
         except Exception as e:
             print(f"Hugging Face error: {e}")
+            # Continue fallback to DeepFace
 
     try:
+        # Use DeepFace to analyze emotion
         result = DeepFace.analyze(
             input_data,
             actions=['emotion'],
-            enforce_detection=False,
+            enforce_detection=False,  # Don't fail if face not detected
             silent=True
         )
 
+        # Handle list result (multiple faces) - take first face
         if isinstance(result, list):
             result = result[0]
 
+        # Get emotion predictions
         emotions = result.get('emotion', {})
         dominant_emotion = result.get('dominant_emotion', 'neutral')
-        emotion_label = dominant_emotion.lower()
 
+        # Map to our label format
+        emotion_label = dominant_emotion.lower()
         if emotion_label in EMOTION_LABELS:
             emotion_idx = EMOTION_LABELS.index(emotion_label)
         else:
-            emotion_idx = 4
+            emotion_idx = 4  # default to neutral
             emotion_label = 'neutral'
 
+        # Get confidence (DeepFace returns percentages)
         confidence = emotions.get(dominant_emotion, 0) / 100.0
+
         return emotion_idx, confidence
+
     except Exception as e:
         print(f"DeepFace error: {e}")
+        # Fallback to neutral
         return 4, 0.5
 
 def predict_emotion_with_label(input_data):
