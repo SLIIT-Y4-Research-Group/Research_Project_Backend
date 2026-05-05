@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
+from typing import List
 
 class Settings(BaseSettings):
     # MongoDB
@@ -10,7 +11,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str
 
     # Gemini
-    GEMINI_API_KEY: str = Field(alias="STORY_GEMINI_API_KEY")
+    # GEMINI_API_KEY: str = Field(alias="STORY_GEMINI_API_KEY")
+    GEMINI_API_KEYS: List[str] = Field(alias="STORY_GEMINI_API_KEYS")
 
     model_config = SettingsConfigDict(
         env_file=".env",

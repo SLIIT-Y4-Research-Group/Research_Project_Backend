@@ -2,7 +2,9 @@
 venv/
 
 # Environment variables
-.env copy
+.env
+.env.*
+!.env.example
 
 # ML models
 models/*.h5
@@ -16,7 +18,7 @@ models/*.tflite
 .idea/
 # Virtual environment
 venv/
-.env
+
 
 # Python cache
 __pycache__/
