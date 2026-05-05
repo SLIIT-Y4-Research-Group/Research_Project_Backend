@@ -8,6 +8,7 @@ import io
 from PIL import Image
 from app.services.emotion_model_service import predict_emotion, EMOTION_LABELS, IMG_SIZE
 from app.services.face_generation_service import generate_happy_face
+from app.services.emotion_image_service import predict_emotion_from_base64
 
 router = APIRouter(prefix="/emotion", tags=["Emotion"])
 
@@ -47,35 +48,8 @@ async def predict_emotion_from_image(request: ImageRequest):
     Accepts any common image format (JPEG, PNG, etc.)
     """
     try:
-        # Decode base64 image
-        image_data = request.image
-        
-        # Handle data URL format (e.g., "data:image/jpeg;base64,/9j/4AAQ...")
-        if "," in image_data:
-            image_data = image_data.split(",")[1]
-        
-        # Decode base64 to bytes
-        image_bytes = base64.b64decode(image_data)
-        
-        # Open image with PIL
-        image = Image.open(io.BytesIO(image_bytes))
-        
-        # Convert to RGB if necessary
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-        
-        # Resize to model input size (224x224)
-        image = image.resize((IMG_SIZE, IMG_SIZE))
-        
-        # Convert to numpy array (keep 0-255 range, preprocessing happens in service)
-        img_array = np.array(image, dtype=np.float32)
-        
-        # Predict emotion
-        idx, conf = predict_emotion(img_array)
-        label = EMOTION_LABELS[idx] if idx < len(EMOTION_LABELS) else "unknown"
-        
+        idx, label, conf = predict_emotion_from_base64(request.image)
         return {"emotion_idx": idx, "emotion_label": label, "confidence": conf}
-        
     except base64.binascii.Error:
         raise HTTPException(status_code=400, detail="Invalid base64 encoding")
     except Exception as e:
