@@ -5,6 +5,7 @@ import tempfile
 import urllib.request
 import shutil
 import h5py
+import logging
 from PIL import Image
 
 # Use DeepFace or Hugging Face for emotion detection (pre-trained models)
@@ -21,6 +22,7 @@ _HF_EMOTION_PIPELINE = None
 _FACE_EMOTION_MODEL = None
 _FACE_EMOTION_MODEL_LOAD_ATTEMPTED = False
 _DOWNLOADED_MODEL_PATH = None
+logger = logging.getLogger(__name__)
 
 _HF_LABEL_ALIASES = {
     "angry": ["angry", "anger", "mad"],
@@ -59,6 +61,15 @@ def _map_hf_label_to_emotion(label):
         if any(alias in label_lower for alias in aliases):
             return target
     return None
+
+
+def _load_model_with_compat(load_model_fn, model_path: str):
+    from tensorflow.keras import mixed_precision
+    custom_objects = {
+        "DTypePolicy": mixed_precision.Policy,
+        "Policy": mixed_precision.Policy,
+    }
+    return load_model_fn(model_path, compile=False, custom_objects=custom_objects)
 
 
 def _predict_emotion_hf(input_data):
@@ -102,17 +113,26 @@ def _get_face_emotion_model():
         model_source = local_model_path
         if is_production and aws_model_path:
             model_source = aws_model_path
+            logger.info("PRODUCTION=true, using AWS model path: %s", aws_model_path)
+        else:
+            logger.info("PRODUCTION=false or AWS_MODEL_PATH empty, using local model path: %s", local_model_path)
 
         if model_source.startswith("http://") or model_source.startswith("https://"):
             model_filename = os.path.basename(model_source) or "face_emotion_model.h5"
             download_path = os.path.join(tempfile.gettempdir(), model_filename)
+            logger.info("Downloading emotion model from URL: %s", model_source)
             urllib.request.urlretrieve(model_source, download_path)
+            logger.info("Downloaded emotion model to temp path: %s", download_path)
             _DOWNLOADED_MODEL_PATH = download_path
             try:
-                _FACE_EMOTION_MODEL = load_model(download_path, compile=False)
+                logger.info("Attempting to load downloaded model: %s", download_path)
+                _FACE_EMOTION_MODEL = _load_model_with_compat(load_model, download_path)
+                logger.info("Loaded downloaded model successfully")
             except Exception as load_err:
                 if "batch_shape" not in str(load_err):
+                    logger.exception("Failed loading downloaded model (non-batch_shape error)")
                     raise
+                logger.warning("Detected batch_shape compatibility issue. Applying patch to downloaded model.")
                 patched_path = os.path.join(tempfile.gettempdir(), f"patched_{model_filename}")
                 shutil.copyfile(download_path, patched_path)
                 with h5py.File(patched_path, "r+") as f:
@@ -123,13 +143,19 @@ def _get_face_emotion_model():
                         cfg = cfg.replace('"batch_shape"', '"batch_input_shape"')
                         f.attrs["model_config"] = cfg.encode("utf-8")
                 _DOWNLOADED_MODEL_PATH = patched_path
-                _FACE_EMOTION_MODEL = load_model(patched_path, compile=False)
+                logger.info("Attempting to load patched downloaded model: %s", patched_path)
+                _FACE_EMOTION_MODEL = _load_model_with_compat(load_model, patched_path)
+                logger.info("Loaded patched downloaded model successfully")
         elif os.path.exists(model_source):
             try:
-                _FACE_EMOTION_MODEL = load_model(model_source, compile=False)
+                logger.info("Attempting to load local model from: %s", model_source)
+                _FACE_EMOTION_MODEL = _load_model_with_compat(load_model, model_source)
+                logger.info("Loaded local model successfully")
             except Exception as load_err:
                 if "batch_shape" not in str(load_err):
+                    logger.exception("Failed loading local model (non-batch_shape error)")
                     raise
+                logger.warning("Detected batch_shape compatibility issue. Applying patch to local model.")
                 patched_path = os.path.join(tempfile.gettempdir(), "patched_local_face_emotion_model.h5")
                 shutil.copyfile(model_source, patched_path)
                 with h5py.File(patched_path, "r+") as f:
@@ -139,17 +165,20 @@ def _get_face_emotion_model():
                             cfg = cfg.decode("utf-8")
                         cfg = cfg.replace('"batch_shape"', '"batch_input_shape"')
                         f.attrs["model_config"] = cfg.encode("utf-8")
-                _FACE_EMOTION_MODEL = load_model(patched_path, compile=False)
+                logger.info("Attempting to load patched local model from: %s", patched_path)
+                _FACE_EMOTION_MODEL = _load_model_with_compat(load_model, patched_path)
+                logger.info("Loaded patched local model successfully")
         else:
-            print(f"face_emotion_model.h5 not found at: {model_source}")
+            logger.error("face_emotion_model.h5 not found at: %s", model_source)
     except Exception as e:
-        print(f"Failed to load face_emotion_model.h5: {e}")
+        logger.exception("Failed to load face_emotion_model.h5: %s", e)
         _FACE_EMOTION_MODEL = None
     return _FACE_EMOTION_MODEL
 
 def _predict_emotion_local_h5(input_data):
     model = _get_face_emotion_model()
     if model is None:
+        logger.warning("Local/S3 face emotion model unavailable for prediction")
         raise RuntimeError("Local face emotion model is unavailable.")
 
     resized = Image.fromarray(input_data).resize((IMG_SIZE, IMG_SIZE))
@@ -194,14 +223,14 @@ def predict_emotion(input_data):
     try:
         return _predict_emotion_local_h5(input_data)
     except Exception as e:
-        print(f"Local face_emotion_model.h5 inference error: {e}")
+        logger.warning("Local face_emotion_model.h5 inference error: %s", e)
 
     provider = _get_emotion_provider()
     if provider == "huggingface":
         try:
             return _predict_emotion_hf(input_data)
         except Exception as e:
-            print(f"Hugging Face error: {e}")
+            logger.warning("Hugging Face error: %s", e)
 
     try:
         result = DeepFace.analyze(
@@ -227,7 +256,7 @@ def predict_emotion(input_data):
         confidence = emotions.get(dominant_emotion, 0) / 100.0
         return emotion_idx, confidence
     except Exception as e:
-        print(f"DeepFace error: {e}")
+        logger.warning("DeepFace error: %s", e)
         return 4, 0.5
 
 def predict_emotion_with_label(input_data):
