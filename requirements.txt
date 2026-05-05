@@ -5,7 +5,7 @@ pydantic
 torch
 transformers
 librosa
-pymongo[srv]
+pymongo[srv]==4.6.3
 python-dotenv
 email-validator
 certifi
