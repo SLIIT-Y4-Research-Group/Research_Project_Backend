@@ -1,11 +1,25 @@
 from typing import Optional, List, Dict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.database.db import moods_col
 from bson import ObjectId
 import logging
 
 # Configure logging for mood service
 logger = logging.getLogger(__name__)
+
+# Sri Lanka timezone (UTC+5:30) - used for "today" calculations
+# because the frontend sends datetime in local Sri Lanka time
+SL_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
+
+
+def _now_sl() -> datetime:
+    """Get current datetime in Sri Lanka timezone"""
+    return datetime.now(SL_TIMEZONE)
+
+
+def _today_sl() -> datetime:
+    """Get today's date at midnight in Sri Lanka timezone (timezone-naive for consistency)"""
+    return _now_sl().replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
 def save_mood(userId: int, mood: str, datetime: datetime):
     """Legacy function - kept for backward compatibility"""
@@ -28,8 +42,11 @@ def get_date_key_from_datetime(dt: datetime) -> str:
 
 
 def get_today_date_key() -> str:
-    """Get today's date_key (YYYY-MM-DD) in UTC"""
-    return get_date_key_from_datetime(datetime.utcnow())
+    """Get today's date_key (YYYY-MM-DD) in Sri Lanka timezone"""
+    today_sl = _now_sl()
+    key = today_sl.strftime("%Y-%m-%d")
+    logger.debug(f"get_today_date_key() = {key} (SL time: {today_sl.strftime('%Y-%m-%d %H:%M:%S')})")
+    return key
 
 
 def get_mood_for_child_on_date(child_id: str, date_key: str) -> Optional[Dict]:
@@ -100,7 +117,7 @@ def get_weekly_moods_for_child(child_id: str, days: int = 7) -> List[Dict]:
         ...
     ]
     """
-    today = datetime.utcnow()
+    today = _now_sl().replace(tzinfo=None)  # Use Sri Lanka time for "today"
     child_oid = ObjectId(child_id)
     date_keys = []
     

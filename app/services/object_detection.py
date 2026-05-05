@@ -4,10 +4,13 @@ from ultralytics import YOLO
 
 _model = None
 
+
 def load_detector(weights_path: str):
     global _model
-    _model = YOLO(weights_path)
+    if _model is None:
+        _model = YOLO(weights_path)
     return _model
+
 
 def detect_objects(detector, pil_img: Image.Image, score_thresh: float = 0.25) -> Dict[str, Any]:
     w, h = pil_img.size

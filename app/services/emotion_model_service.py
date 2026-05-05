@@ -1,4 +1,7 @@
-# app/services/emotion_model_service.py
+import os
+from functools import lru_cache
+from typing import Tuple
+
 import numpy as np
 import os
 import tempfile
@@ -7,11 +10,12 @@ import shutil
 import h5py
 import logging
 from PIL import Image
+import torch
+import timm
+from torchvision import transforms
 
-# Use DeepFace or Hugging Face for emotion detection (pre-trained models)
-from deepface import DeepFace
+from app.core.config import EMOTION_MODEL_PATH
 
-# Image size (DeepFace handles resizing internally)
 IMG_SIZE = 224
 
 # Emotion labels
@@ -206,11 +210,9 @@ def predict_emotion(input_data):
     """
     # Ensure correct input shape
     if len(input_data.shape) == 2:
-        # If 2D (H, W), add channel dimension
         input_data = np.expand_dims(input_data, axis=-1)
-    
+
     if input_data.shape[-1] == 1:
-        # If grayscale, convert to RGB
         input_data = np.concatenate([input_data] * 3, axis=-1)
     
     # Ensure uint8 format for DeepFace
@@ -259,8 +261,17 @@ def predict_emotion(input_data):
         logger.warning("DeepFace error: %s", e)
         return 4, 0.5
 
-def predict_emotion_with_label(input_data):
-    """Predict emotion and return both index and label."""
+def predict_emotion_with_label(input_data: np.ndarray):
+    loaded = load_emotion_model()
+    idx_to_class = loaded["idx_to_class"]
+
     emotion_idx, confidence = predict_emotion(input_data)
-    emotion_label = EMOTION_LABELS[emotion_idx] if emotion_idx < len(EMOTION_LABELS) else "unknown"
+    emotion_label = idx_to_class.get(emotion_idx, EMOTION_LABELS[emotion_idx]).lower()
+
+    if emotion_label not in ("happy", "sad"):
+        if "happy" in emotion_label:
+            emotion_label = "happy"
+        else:
+            emotion_label = "sad"
+
     return emotion_idx, emotion_label, confidence

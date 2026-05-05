@@ -1,6 +1,8 @@
 from bson import ObjectId
 from typing import List
+import base64
 from app.database.db import children_col, drawing_analyses
+
 
 def get_drawings_for_parent(parent_id: str) -> List[dict]:
     if not ObjectId.is_valid(parent_id):
@@ -39,6 +41,9 @@ def get_drawings_for_parent(parent_id: str) -> List[dict]:
             "stroke": drawing.get("stroke"),
             "spatial": drawing.get("spatial"),
             "objects": drawing.get("objects"),
+            "llm_review": drawing.get("llm_review"),
+            "description": drawing.get("description"),
+            "image_base64": base64.b64encode(drawing["image_bytes"]).decode("utf-8") if drawing.get("image_bytes") else None,
         })
 
     return results
