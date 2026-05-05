@@ -1,13 +1,21 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 class Settings(BaseSettings):
-    MONGODB_URI: str            
-    MONGODB_DB_NAME: str       
-    SECRET_KEY: str              
-    GEMINI_API_KEY: str
+    # MongoDB
+    MONGODB_URI: str = Field(alias="MONGO_URI")
+    MONGODB_DB_NAME: str = Field(alias="MONGO_DB_NAME")
 
-    class Config:
-        env_file = ".env copy"
-        env_file_encoding = "utf-8"
+    # Security
+    SECRET_KEY: str
+
+    # Gemini
+    GEMINI_API_KEY: str = Field(alias="STORY_GEMINI_API_KEY")
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
 settings = Settings()
