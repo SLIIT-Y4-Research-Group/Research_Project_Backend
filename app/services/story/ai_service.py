@@ -176,5 +176,5 @@ class EnhancedSinhalaStoryGenerator:
 
 
 story_generator = EnhancedSinhalaStoryGenerator(
-    api_key=settings.GEMINI_API_KEYS[0]
+    api_key=settings.GEMINI_API_KEY
 )
