@@ -88,9 +88,9 @@ KEYWORDS = {
         "විනෝද", "රසවත්"
     ],
     2: [
-        "යාළුව", "ගුරුවර", "ගැටලුව", "රණ්ඩු", "බැන", "තරහ", 
+        "යාළුව", "ගුරුවර","උඹ","ගැටලුව", "රණ්ඩු", "බැන", "තරහ", 
         "කතා නැහැ", "ආරවුල", "ගැටුම", "වැරදි", " ගහ ගත්තා", "ගහගත්තා",
-        " බැන ගත්තා", "බැන්නා","අපහාස කරා", "අපහාස වුණා","ප්‍රශ්නයක් ",
+        " බැන ගත්තා", "බැන්නා","අපහාස කරා", "අපහාස වුණා","ප්‍රශ්නයක් ", "ගහගන්න"
     ],
     3: [
         "පාඩම්", "homework", "exam", "පරීක්ෂණ", "විභාග", "ආතතිය", 
@@ -345,7 +345,7 @@ def validate_answer(question_id: int, text: str) -> dict:
                 }
     
     # For Q2-Q5, prioritize YES/NO detection if answer starts with YES/NO token
-    # This prevents longer answers like "ඔව් අද ගොඩක් වැඩ තිබුණා" from being sent to ML
+    
     if question_id in [2, 3, 4, 5]:
         yn, first_token = starts_with_yes_no(normalized)
         if yn:

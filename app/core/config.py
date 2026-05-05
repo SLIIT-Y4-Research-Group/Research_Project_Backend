@@ -8,6 +8,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent   # app/
 PROJECT_ROOT = BASE_DIR.parent                      # backend/
 MODEL_DIR = BASE_DIR / "models"
 
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    value = value.strip().lower()
+    return value in {"true", "1", "yes", "y"}
+
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "research_project")
 
@@ -20,6 +28,14 @@ YOLO_MODEL_PATH = os.getenv(
     "YOLO_MODEL_PATH",
     str(MODEL_DIR / "best.pt")
 )
+
+PRODUCTION = _env_flag("PRODUCTION", False)
+LOCAL_MODEL_PATH = os.getenv(
+    "LOCAL_MODEL_PATH",
+    str(BASE_DIR / "ml" / "model" / "final_sinhala_mood_model")
+)
+AWS_MODEL_PATH = os.getenv("AWS_MODEL_PATH", "")
+MOOD_MODEL_PATH = AWS_MODEL_PATH if PRODUCTION else LOCAL_MODEL_PATH
 
 ENABLE_OBJECT_DETECTION = os.getenv(
     "ENABLE_OBJECT_DETECTION",

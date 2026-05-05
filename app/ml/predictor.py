@@ -2,7 +2,9 @@ from pathlib import Path
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-MODEL_DIR = Path(__file__).parent / "model" / "final_sinhala_mood_model"
+from app.core.config import MOOD_MODEL_PATH, PRODUCTION
+
+MODEL_DIR = Path(MOOD_MODEL_PATH)
 
 # device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -28,6 +30,8 @@ def _load_model() -> None:
     global tokenizer, model, id2label
     if tokenizer is not None and model is not None and id2label is not None:
         return
+    source_label = "AWS" if PRODUCTION else "LOCAL"
+    print(f"Loading mood model from {source_label}: {MODEL_DIR}")
     if not _model_files_present():
         raise RuntimeError(
             f"Model files not found in {MODEL_DIR}. "

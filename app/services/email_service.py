@@ -41,7 +41,7 @@ def send_email(to_email: str, subject: str, html_body: str) -> bool:
         html_part = MIMEText(html_body, 'html')
         msg.attach(html_part)
         
-        logger.info(f"📧 Connecting to SMTP server: {SMTP_HOST}:{SMTP_PORT}")
+        logger.info(f" Connecting to SMTP server: {SMTP_HOST}:{SMTP_PORT}")
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
             server.starttls()
             logger.debug(f"📧 Logging in with user: {SMTP_USER}")
@@ -53,14 +53,14 @@ def send_email(to_email: str, subject: str, html_body: str) -> bool:
         return True
         
     except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"❌ SMTP Authentication failed: {str(e)}")
+        logger.error(f" SMTP Authentication failed: {str(e)}")
         logger.error(f"   Check SMTP_USER and SMTP_PASS in .env file")
         return False
     except smtplib.SMTPException as e:
-        logger.error(f"❌ SMTP error sending email: {str(e)}")
+        logger.error(f" SMTP error sending email: {str(e)}")
         return False
     except Exception as e:
-        logger.error(f"❌ Failed to send email: {str(e)}", exc_info=True)
+        logger.error(f" Failed to send email: {str(e)}", exc_info=True)
         return False
 
 def send_trusted_contact_invitation(to_email: str, child_name: str, token: str) -> bool:
@@ -128,11 +128,11 @@ def send_mood_alert(recipients: List[str], child_name: str, bad_mood_count: int)
     Returns:
         True if all emails sent successfully, False otherwise
     """
-    logger.info(f"📧 send_mood_alert called: child={child_name}, bad_mood_count={bad_mood_count}, recipients={len(recipients)}")
-    logger.info(f"📧 Recipients: {recipients}")
+    logger.info(f" send_mood_alert called: child={child_name}, bad_mood_count={bad_mood_count}, recipients={len(recipients)}")
+    logger.info(f" Recipients: {recipients}")
     
     if not recipients:
-        logger.warning(f"⚠️ No recipients provided for mood alert (child: {child_name})")
+        logger.warning(f" No recipients provided for mood alert (child: {child_name})")
         return False
     
     subject = f"Mental Health Alert: {child_name}"
