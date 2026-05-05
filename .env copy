@@ -1,4 +1,30 @@
-MONGODB_URI=mongodb+srv://kavi123:kavi123@cluster0.cn6vezc.mongodb.net/research_project?retryWrites=true&w=majority
-MONGODB_DB_NAME=research_project
-SECRET_KEY=your-secret-key-here
-GEMINI_API_KEY=AIzaSyBChJmJxTXmAeMB-p-vMqHim-pC2DVs20Q
+MONGO_URI=mongodb+srv://achintha:achintha123@research.luwgjsi.mongodb.net/?appName=Research
+MONGO_DB_NAME=research_db
+
+# JWT Configuration
+JWT_SECRET=your-super-secret-key-please-change-this-in-production-12345
+JWT_ALGORITHM=HS256
+JWT_EXPIRE_MINUTES=10080
+
+# Email SMTP Configuration
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=support.suwamanasa@gmail.com
+SMTP_PASS=tgosjwapuixtofdj
+FROM_EMAIL=support.suwamanasa@gmail.com
+
+# Frontend/Backend URLs
+FRONTEND_BASE_URL=http://localhost:3000
+BACKEND_BASE_URL=http://localhost:8000
+
+CLOUDINARY_CLOUD_NAME=dwi1xi0qp
+CLOUDINARY_API_KEY=958861782257884
+CLOUDINARY_API_SECRET=Va7LayjOPDqlVUI7E9oUqnHWNO0
+
+# Alert Configuration
+BAD_MOOD_THRESHOLD=1
+
+PRODUCTION=false
+
+LOCAL_MODEL_PATH=app/ml/model/final_sinhala_mood_model
+AWS_MODEL_PATH=s3://research-models-prod/mood_prediction_model/final_sinhala_mood_model/

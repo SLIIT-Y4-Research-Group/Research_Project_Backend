@@ -443,6 +443,87 @@ Return ONLY valid JSON with this EXACT structure:
 """
 
 
+def build_fallback_description(
+  analysis_payload: Dict[str, Any] | None = None,
+  labels: List[str] | None = None,
+  colors: List[str] | None = None,
+  objects: List[str] | None = None,
+) -> Dict[str, Any]:
+  if analysis_payload:
+    labels = labels or analysis_payload.get("labels") or []
+    colors = colors or analysis_payload.get("color", {}).get("dominant_colors") or []
+    objects = objects or analysis_payload.get("objects") or []
+
+  labels = labels or []
+  colors = colors or []
+  objects = objects or []
+
+  parts = []
+
+  if objects:
+    parts.append("The drawing seems to include " + ", ".join(objects[:5]) + ".")
+  elif labels:
+    parts.append("The drawing may show " + ", ".join(labels[:5]) + ".")
+  else:
+    parts.append("The drawing contains simple shapes and lines.")
+
+  if colors:
+    parts.append("It uses colors such as " + ", ".join(colors[:5]) + ".")
+
+  description = " ".join(parts)
+
+  detected_objects = [
+    {
+      "label": obj,
+      "evidence": "Detected in fallback mode.",
+      "symbolism": "Not evaluated.",
+      "emotional_weight": "neutral",
+    }
+    for obj in objects[:5]
+  ]
+
+  return {
+    "final_emotion": "sad",
+    "confidence_level": "low",
+    "reason": "Fallback response used due to review failure.",
+    "detected_objects": detected_objects,
+    "missed_objects": [],
+    "color_analysis": {
+      "dominant_colors": colors,
+      "palette_mood": "neutral",
+      "warm_cool_balance": "unknown",
+      "pressure_observations": "unknown",
+      "interpretation": [],
+    },
+    "spatial_analysis": {
+      "layout_type": "other",
+      "figure_sizes": "unknown",
+      "connections": "unknown",
+      "empty_space": "unknown",
+      "placement_notes": [],
+      "relationship_notes": [],
+    },
+    "stroke_analysis": {
+      "pressure": "unknown",
+      "control": "unknown",
+      "detail_level": "minimal",
+      "notable_marks": "none",
+    },
+    "developmental_notes": {
+      "age_appropriate": True,
+      "observations": "Fallback response; no detailed evaluation.",
+    },
+    "parent_guidance": {
+      "key_observations": [],
+      "suggested_questions": [],
+      "follow_up_needed": False,
+      "follow_up_reason": "Fallback response; review unavailable.",
+    },
+    "emotional_condition": "A brief fallback summary is provided.",
+    "description": description,
+  }
+
+
 def review_drawing_analysis_with_gemini_image(
     image_bytes: bytes,
     mime_type: str,

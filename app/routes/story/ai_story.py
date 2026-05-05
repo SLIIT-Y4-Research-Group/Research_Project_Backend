@@ -74,7 +74,13 @@ async def generate_story(request: StoryRequest):
                 detail=f"Invalid story length '{request.story_length}'. Must be one of: {valid_story_lengths}"
             )
         
-        logger.info(f"Generating enhanced story: mood={request.mood}, weather={request.weather}, character={request.character}, length={request.story_length}")
+        logger.info(
+            "Generating enhanced story: mood=%s, weather=%s, character=%s, length=%s",
+            request.mood,
+            request.weather,
+            request.character,
+            request.story_length,
+        )
         
         # Generate story using enhanced model
         result = story_generator.generate_story(
@@ -86,10 +92,11 @@ async def generate_story(request: StoryRequest):
             temperature=max(0.1, min(request.temperature, 1.0))  # Ensure valid range
         )
         
-        if not result.get('success', False):
+        if not result.get("success", False):
+            error_detail = result.get("error") or "Failed to generate story"
             raise HTTPException(
                 status_code=500,
-                detail=result.get('error', 'Failed to generate story')
+                detail=error_detail
             )
         
         return EnhancedStoryResponse(**result)
@@ -97,7 +104,7 @@ async def generate_story(request: StoryRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Story generation error: {str(e)}", exc_info=True)
+        logger.error("Story generation error: %s", str(e), exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate story: {str(e)}"

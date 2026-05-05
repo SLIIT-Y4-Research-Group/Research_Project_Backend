@@ -91,9 +91,10 @@ class EnhancedSinhalaStoryGenerator:
             }
 
         except Exception as e:
-            logger.error(f"Story generation failed: {e}")
+            logger.error(f"Story generation failed: {e}", exc_info=True)
             return {
                 "success": False,
+                "error": str(e),
                 "story": "කථාව නිර්මාණය කිරීමේදී දෝෂයක් ඇති විය."
             }
 
@@ -140,16 +141,19 @@ class EnhancedSinhalaStoryGenerator:
 """
 
         # Generate text using the correct SDK call
-        response = self.client.models.generate_content(
-            model=self.model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=temperature,
-                max_output_tokens=5000
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=temperature,
+                    max_output_tokens=5000
+                )
             )
-        )
-
-        return response.text.strip()
+            return (response.text or "").strip()
+        except Exception as e:
+            logger.error(f"Gemini generate_content failed: {e}", exc_info=True)
+            raise
 
     def _extract_moral(self, mood):
         moral = self.moral_lessons.get(mood, self.moral_lessons["happy"])
