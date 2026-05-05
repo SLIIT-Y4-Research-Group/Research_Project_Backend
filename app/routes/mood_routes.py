@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.schemas.mood_schema import MoodCheckin, MoodData, MoodStoreRequest, MoodPredictRequest, MoodQuestionPredictRequest, ValidateAnswerRequest, MoodOverallRequest, AlertPermissionResponse
-from app.services.mood_service import save_mood
+from app.services.mood_service import save_mood, get_today_mood_for_child, get_weekly_moods_for_child
 from app.services.answer_validator import validate_answer, normalize_text
 from app.ml.predictor import predict_with_probs
 from app.services.auth_service import get_current_child
@@ -11,6 +11,133 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/mood", tags=["Mood"])
 
+
+CONFLICT_NEGATIVE_KEYWORDS = {
+    "ගහගත්තා",
+    "ගහගත්ත",
+    "ගහ ගත්තා",
+    "ගහගත්තු",
+    "ගැහුවා",
+    "ගැහුවේ",
+    "රණ්ඩු",
+    "රණ්ඩුවක්",
+    "බැනගත්තා",
+    "ගොඩගැහිලා",
+    "ගැටුම",
+}
+
+
+def simple_score_from_mood(mood: str) -> int:
+    """Map mood label to a simple score (+1, 0, -1)."""
+    mood_lower = str(mood).lower()
+    if mood_lower == "happy":
+        return 1
+    if mood_lower == "bad":
+        return -1
+    return 0
+
+
+def evaluate_answer(question_id: int, text: str) -> dict:
+    """
+    Unified evaluation pipeline used by both /predict_question and /predict_overall.
+
+    Flow:
+    1) validate_answer(question_id, text)
+    2) route by status
+    3) optionally run ML and compute score contribution
+    """
+    validation = validate_answer(question_id, text)
+    status = validation.get("status", "UNKNOWN")
+    normalized = validation.get("normalized", normalize_text(text or ""))
+
+    result = {
+        "question_id": question_id,
+        "text": text,
+        "validation": validation,
+        "status": status,
+        "normalized": normalized,
+        "mood": "Unknown",
+        "confidence": 0.0,
+        "probs": {},
+        "score": 0,
+        "reason": status,
+        "used_ml": False,
+    }
+
+    # Early return for invalid/non-informative answers.
+    if status in {"EMPTY", "NEED_MORE_INFO", "IRRELEVANT"}:
+        return result
+
+    # Rule-only yes/no handling for Q2-Q5.
+    if status == "YES_NO" and question_id in [2, 3, 4, 5]:
+        yn_value = validation.get("yn_value")
+
+        if yn_value not in {"YES", "NO"}:
+            # Safe fallback: do not score ambiguous YES_NO payloads.
+            result["status"] = "NEED_MORE_INFO"
+            result["reason"] = "INVALID_YN_VALUE"
+            return result
+
+        if question_id in [2, 3, 4]:
+            if yn_value == "YES":
+                result["mood"] = "Bad"
+                result["score"] = -1
+            else:
+                result["mood"] = "Happy"
+                result["score"] = 1
+        else:  # question_id == 5
+            if yn_value == "YES":
+                result["mood"] = "Happy"
+                result["score"] = 1
+            else:
+                result["mood"] = "Normal"
+                result["score"] = 0
+
+        result["confidence"] = 1.0
+        result["reason"] = "YES_NO_RULE"
+        return result
+
+    # Rule-only direct mood for Q1.
+    if status == "Q1_DIRECT_MOOD" and question_id == 1:
+        direct_mood = validation.get("direct_mood", "Normal")
+        result["mood"] = direct_mood
+        result["score"] = simple_score_from_mood(direct_mood)
+        result["confidence"] = 1.0
+        result["reason"] = "Q1_DIRECT_MOOD"
+        return result
+
+    # Rule-only neutral phrase for Q2-Q5 (do not call ML).
+    if status == "NEUTRAL_PHRASE" and question_id in [2, 3, 4, 5]:
+        result["mood"] = "Normal"
+        result["score"] = 0
+        result["confidence"] = 1.0
+        result["reason"] = "NEUTRAL_PHRASE"
+        return result
+
+    # Rule-only override for strong conflict/violence phrases.
+    if status == "VALID_TEXT":
+        if any(keyword in normalized for keyword in CONFLICT_NEGATIVE_KEYWORDS):
+            result["mood"] = "Bad"
+            result["confidence"] = 1.0
+            result["score"] = -1
+            result["reason"] = "RULE_CONFLICT_BAD"
+            return result
+
+    # ML path for valid descriptive text.
+    if status == "VALID_TEXT":
+        ml_result = predict_with_probs(text)
+        mood = ml_result.get("mood", "Unknown")
+        result["mood"] = mood
+        result["confidence"] = ml_result.get("confidence", 0.0)
+        result["probs"] = ml_result.get("probs", {})
+        result["used_ml"] = True
+        result["reason"] = "ML"
+        result["score"] = simple_score_from_mood(mood)
+        return result
+
+    # Defensive fallback for unknown statuses.
+    return result
+
 @router.post("/checkin")
 def mood_checkin(data: MoodCheckin):
     result = save_mood(data.child_id, data.mood, data.note)
@@ -20,6 +147,66 @@ def mood_checkin(data: MoodCheckin):
         "mood": result.mood,
         "note": result.note
     }}
+
+@router.get("/today")
+def get_today_mood(current_child: TokenData = Depends(get_current_child)):
+    """
+    Get today's mood for the current child
+    
+    Returns:
+    - If mood recorded today: {status: "success", mood: {_id, mood, datetime, date_key}, completed: true}
+    - If no mood today: {status: "success", mood: null, completed: false}
+    """
+    mood = get_today_mood_for_child(current_child.id)
+    
+    if mood:
+        return {
+            "status": "success",
+            "completed": True,
+            "mood": {
+                "_id": str(mood["_id"]),
+                "mood": mood["mood"],
+                "datetime": mood["datetime"],
+                "date_key": mood.get("date_key")
+            }
+        }
+    else:
+        return {
+            "status": "success",
+            "completed": False,
+            "mood": None
+        }
+
+@router.get("/history")
+def get_mood_history(
+    days: int = 7,
+    current_child: TokenData = Depends(get_current_child)
+):
+    """
+    Get mood history for the last N days (default 7)
+    
+    Returns list of dates with mood status:
+    [
+        {date: "2026-03-11", mood: "Bad", completed: true, datetime: "..."},
+        {date: "2026-03-10", mood: null, completed: false, datetime: null},
+        ...
+    ]
+    """
+    from datetime import datetime, timedelta
+    
+    # Limit to reasonable range
+    if days < 1:
+        days = 7
+    if days > 30:
+        days = 30
+    
+    moods = get_weekly_moods_for_child(current_child.id, days)
+    
+    return {
+        "status": "success",
+        "days": days,
+        "moods": moods
+    }
 
 @router.post("/store")
 def store_mood(data: MoodStoreRequest, current_child: TokenData = Depends(get_current_child)):
@@ -51,22 +238,19 @@ def store_mood(data: MoodStoreRequest, current_child: TokenData = Depends(get_cu
         dt=data.datetime
     )
     
-    # If mood already exists for today, return early with "already_exists" status
+    # If mood already exists for today, return 409 Conflict
     if not created:
-        logger.info(f"Mood already exists for child {current_child.id} - returning 'already_exists' status")
-        return {
-            "status": "already_exists",
-            "message": "Mood already recorded for today",
-            "data": {
-                "_id": str(mood_doc["_id"]),
-                "child_id": str(mood_doc["child_id"]),
-                "mood": mood_doc["mood"],
-                "datetime": mood_doc["datetime"],
-                "date_key": mood_doc["date_key"]
-            },
-            "alert_permission_needed": False,
-            "bad_mood_count": None
-        }
+        logger.warning(f"Mood already exists for child {current_child.id} on {mood_doc.get('date_key')} - returning 409 Conflict")
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Mood already recorded for today",
+                "date_key": mood_doc.get("date_key"),
+                "existing_mood": mood_doc["mood"],
+                "recorded_at": mood_doc["datetime"]
+            }
+        )
     
     # Mood successfully created - now check for alert logic
     alert_permission_needed = False
@@ -76,35 +260,58 @@ def store_mood(data: MoodStoreRequest, current_child: TokenData = Depends(get_cu
     
     try:
         child = get_child_by_id(current_child.id)
-        
+
         # Only check if child exists AND has global consent enabled
         if child and child.get("alerts_consent", False):
-            # Count bad moods in last 7 days (now uses daily moods only)
-            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+            mood_value = str(mood_doc.get("mood", "")).lower()
+            if mood_value != "bad":
+                return {
+                    "status": "success",
+                    "data": {
+                        "_id": str(mood_doc["_id"]),
+                        "child_id": str(mood_doc["child_id"]),
+                        "mood": mood_doc["mood"],
+                        "datetime": mood_doc["datetime"],
+                        "date_key": mood_doc["date_key"]
+                    },
+                    "alert_permission_needed": False,
+                    "bad_mood_count": None
+                }
+
+            # Count bad moods in last 7 days using date_key (timezone-consistent)
+            from app.services.mood_service import get_today_date_key, get_date_key_from_datetime
+            today_key = get_today_date_key()
+            date_keys_7d = []
+            from datetime import datetime as dt_class
+            today_dt = dt_class.strptime(today_key, "%Y-%m-%d")
+            for i in range(7):
+                d = today_dt - timedelta(days=i)
+                date_keys_7d.append(d.strftime("%Y-%m-%d"))
             
             bad_mood_count = moods_col.count_documents({
                 "child_id": ObjectId(current_child.id),
                 "mood": {"$in": ["Bad", "bad", "BAD"]},
-                "datetime": {"$gte": seven_days_ago}
+                "date_key": {"$in": date_keys_7d}
             })
             
-            logger.debug(f"Bad mood count for child {current_child.id}: {bad_mood_count} (threshold: {BAD_MOOD_THRESHOLD})")
+            logger.info(f"Alert check - Child: {current_child.id}, Bad mood count (7 days): {bad_mood_count}, Threshold: {BAD_MOOD_THRESHOLD}, Alerts enabled: {child.get('alerts_consent')}")
             
             # NEW BEHAVIOR: Mark pending alert instead of sending immediately
             if bad_mood_count >= BAD_MOOD_THRESHOLD:
-                logger.info(f"Bad mood threshold reached for child {current_child.id} - setting pending alert")
+                logger.warning(f"🚨 Bad mood threshold reached! Child {current_child.id} has {bad_mood_count} bad moods (threshold: {BAD_MOOD_THRESHOLD})")
                 # Check if there's already a pending alert to avoid duplicates
                 pending_alert = child.get("pending_alert", {})
                 if not pending_alert.get("exists", False):
                     # Mark alert as pending (requires student permission)
                     from app.services.child_service import set_pending_alert
                     set_pending_alert(current_child.id, bad_mood_count, mood_doc["_id"])
-                    logger.debug(f"Pending alert set for child {current_child.id}")
+                    logger.info(f"✓ Pending alert set for child {current_child.id} - permission dialog will be shown")
                 else:
                     logger.debug(f"Pending alert already exists for child {current_child.id}")
                 
                 # Signal to frontend that permission dialog should be shown
                 alert_permission_needed = True
+                logger.info(f"✓ Setting alert_permission_needed=True in response")
     except Exception as e:
         # Log error but don't fail the mood storage
         print(f"Alert check failed: {str(e)}")
@@ -138,57 +345,19 @@ def predict_question(data: MoodQuestionPredictRequest):
     Returns:
         JSON with question_id, text, normalized, mood, confidence, probs, and reason
     """
-    # Define neutral override phrases (exact match after normalization)
-    NEUTRAL_PHRASES = {
-        "එහෙම විශේෂ දෙයක් නෑ",
-        "විශේෂ දෙයක් නෑ",
-        "විශේෂ නැහැ",
-        "එහෙම දෙයක් නෑ",
-        "එහෙම දෙයක් වුණේ නෑ",
-        "අද සාමාන්‍ය විදිහට වැඩ ටික සිද්ධ වුණා",
-        "කමක් නෑ",
-        "අවුලක් නෑ",
-        "වැඩක් නෑ"
-    }
-    
-    # Normalize text
-    normalized = normalize_text(data.text)
-    
-    # Check if empty
-    if not normalized:
-        return {
-            "question_id": data.question_id,
-            "text": data.text,
-            "normalized": normalized,
-            "mood": "Unknown",
-            "confidence": 0.0,
-            "probs": {},
-            "reason": "EMPTY"
-        }
-    
-    # Check if it's a neutral phrase override
-    if normalized in NEUTRAL_PHRASES:
-        return {
-            "question_id": data.question_id,
-            "text": data.text,
-            "normalized": normalized,
-            "mood": "Normal",
-            "confidence": 1.0,
-            "probs": {},
-            "reason": "NEUTRAL_OVERRIDE"
-        }
-    
-    # Fall back to ML prediction
-    ml_result = predict_with_probs(data.text)
-    
+    evaluation = evaluate_answer(data.question_id, data.text)
+
+    # Keep legacy response keys and add non-breaking details.
     return {
         "question_id": data.question_id,
         "text": data.text,
-        "normalized": normalized,
-        "mood": ml_result.get("mood", "Unknown"),
-        "confidence": ml_result.get("confidence", 0.0),
-        "probs": ml_result.get("probs", {}),
-        "reason": "ML"
+        "normalized": evaluation.get("normalized", ""),
+        "mood": evaluation.get("mood", "Unknown"),
+        "confidence": evaluation.get("confidence", 0.0),
+        "probs": evaluation.get("probs", {}),
+        "reason": evaluation.get("reason", "UNKNOWN"),
+        "validation": evaluation.get("validation", {}),
+        "score": evaluation.get("score", 0)
     }
 
 @router.post("/validate_answer")
@@ -227,10 +396,6 @@ def predict_overall(data: MoodOverallRequest):
         else:
             return mood  # Return as-is if unknown
     
-    # Define YES/NO word sets
-    YES_WORDS = {"ඔව්", "ඔව්ව", "හරි", "ok", "okay", "ඔකේ"}
-    NO_WORDS = {"නෑ", "නැහැ", "නොවෙයි", "no", "nope"}
-    
     # Initialize results
     per_question = []
     total_score = 0
@@ -248,141 +413,54 @@ def predict_overall(data: MoodOverallRequest):
         question_id = i + 1
         answer_text = data.answers[i] if i < len(data.answers) else ""
         
-        # Normalize text
-        normalized = answer_text.strip().lower()
-        normalized = " ".join(normalized.split())  # Collapse spaces
-        
+        evaluation = evaluate_answer(question_id, answer_text)
+        status = evaluation.get("status", "UNKNOWN")
+
         question_info = {
             "question_id": question_id,
             "answer": answer_text,
             "mood": "Unknown",
             "score": 0,
-            "confidence": 0.0
+            "confidence": 0.0,
+            "validation": evaluation.get("validation", {})
         }
-        
-        # Check if question was skipped (empty after normalization)
-        # Skipped questions contribute 0 to scoring
-        if not normalized:
+
+        # Keep legacy skipped behavior for empty answers.
+        if status == "EMPTY":
             question_info["mood"] = "Skipped"
             question_info["score"] = 0
             question_info["confidence"] = 0.0
             per_question.append(question_info)
-            continue  # Skip to next question
-        
-        # Q1: Use ML model prediction
-        if question_id == 1:
-            ml_result = predict_with_probs(answer_text)
-            mood = ml_result.get("mood", "Unknown")
-            confidence = ml_result.get("confidence", 0.0)
-            
-            # Map mood to score
-            if mood in ["Happy", "happy", "HAPPY"]:
-                score = 2
-            elif mood in ["Normal", "normal", "NORMAL"]:
-                score = 0
-            elif mood in ["Bad", "bad", "BAD"]:
-                score = -2
-            else:
-                score = 0
-            
+
+            continue
+
+        score = evaluation.get("score", 0)
+        mood = evaluation.get("mood", "Unknown")
+        confidence = evaluation.get("confidence", 0.0)
+
+        # Keep existing frontend-facing Sinhala labels for rule branches.
+        if status == "YES_NO" and question_id in [2, 3, 4]:
+            question_info["mood"] = "දුකයි / හොඳ නෑ" if score < 0 else "සතුටුයි"
+        elif status == "YES_NO" and question_id == 5:
+            question_info["mood"] = "සතුටුයි" if score > 0 else "සාමාන්‍ය"
+        elif mood == "Unknown":
+            question_info["mood"] = "Unknown"
+        else:
             question_info["mood"] = map_mood_to_sinhala(mood)
-            question_info["score"] = score
-            question_info["confidence"] = confidence
-            total_score += score
-        
-        # Q2-Q4: YES = problems (negative), NO = neutral
-        elif question_id in [2, 3, 4]:
-            if normalized in YES_WORDS:
-                # YES indicates a problem
-                if question_id in [2, 3]:
-                    score = -2
-                else:  # Q4
-                    score = -1
-                question_info["mood"] = "දුකයි / හොඳ නෑ"
-                question_info["score"] = score
-                question_info["confidence"] = 1.0
-                total_score += score
-            elif normalized in NO_WORDS:
-                # NO = no problem
-                question_info["mood"] = "සතුටුයි"
-                question_info["score"] = 0
-                question_info["confidence"] = 1.0
-            else:
-                # Long text or descriptive answer
-                word_count = len(normalized.split())
-                if word_count >= 3:
-                    # Use ML with lower weight
-                    ml_result = predict_with_probs(answer_text)
-                    mood = ml_result.get("mood", "Unknown")
-                    confidence = ml_result.get("confidence", 0.0)
-                    
-                    # Map with smaller weight
-                    if mood in ["Happy", "happy", "HAPPY"]:
-                        score = 1
-                    elif mood in ["Normal", "normal", "NORMAL"]:
-                        score = 0
-                    elif mood in ["Bad", "bad", "BAD"]:
-                        score = -1
-                    else:
-                        score = 0
-                    
-                    question_info["mood"] = map_mood_to_sinhala(mood)
-                    question_info["score"] = score
-                    question_info["confidence"] = confidence
-                    total_score += score
-                else:
-                    # Short and ambiguous
-                    question_info["mood"] = "Unknown"
-                    question_info["score"] = 0
-        
-        # Q5: YES = happiness (positive), NO = neutral
-        elif question_id == 5:
-            if normalized in YES_WORDS:
-                score = 2
-                question_info["mood"] = "සතුටුයි"
-                question_info["score"] = score
-                question_info["confidence"] = 1.0
-                total_score += score
-            elif normalized in NO_WORDS:
-                question_info["mood"] = "සාමාන්‍ය"
-                question_info["score"] = 0
-                question_info["confidence"] = 1.0
-            else:
-                # Long text or descriptive answer
-                word_count = len(normalized.split())
-                if word_count >= 3:
-                    # Use ML with lower weight
-                    ml_result = predict_with_probs(answer_text)
-                    mood = ml_result.get("mood", "Unknown")
-                    confidence = ml_result.get("confidence", 0.0)
-                    
-                    # Map with smaller weight
-                    if mood in ["Happy", "happy", "HAPPY"]:
-                        score = 1
-                    elif mood in ["Normal", "normal", "NORMAL"]:
-                        score = 0
-                    elif mood in ["Bad", "bad", "BAD"]:
-                        score = -1
-                    else:
-                        score = 0
-                    
-                    question_info["mood"] = map_mood_to_sinhala(mood)
-                    question_info["score"] = score
-                    question_info["confidence"] = confidence
-                    total_score += score
-                else:
-                    question_info["mood"] = "Unknown"
-                    question_info["score"] = 0
-        
+
+        question_info["score"] = score
+        question_info["confidence"] = confidence
+        total_score += score
+
         per_question.append(question_info)
     
-    # Determine final mood from total score (unchanged thresholds)
-    if total_score <= -3:
-        final_mood = "Bad"
-    elif -2 <= total_score <= 1:
-        final_mood = "Normal"
-    else:  # total_score >= 2
+    # Determine final mood from total score (simple thresholds)
+    if total_score >= 2:
         final_mood = "Happy"
+    elif total_score <= -1:
+        final_mood = "Bad"
+    else:
+        final_mood = "Normal"
     
     return {
         "final_mood": final_mood,
@@ -432,26 +510,45 @@ def respond_alert_permission(
     
     # Handle student's decision
     if data.approve:
+        logger.info(f"📧 Student {current_child.id} ({child.get('name')}) APPROVED alert - sending emails")
+        
         # Student APPROVED - send email alerts
         recipients = get_parent_and_trusted_emails(current_child.id)
+        logger.info(f"📧 Email recipients: {recipients}")
         
+        email_sent = False
         if recipients:
-            send_mood_alert(
-                recipients=recipients,
-                child_name=child.get("name", "the child"),
-                bad_mood_count=pending_alert.get("bad_mood_count", 0)
-            )
+            try:
+                logger.info(f"📧 Attempting to send alert to {len(recipients)} recipient(s)")
+                email_result = send_mood_alert(
+                    recipients=recipients,
+                    child_name=child.get("name", "the child"),
+                    bad_mood_count=pending_alert.get("bad_mood_count", 0)
+                )
+                email_sent = bool(email_result)
+                if email_sent:
+                    logger.info(f"✅ SUCCESS: Email sent to {recipients}")
+                else:
+                    logger.error(f"❌ FAILED: send_mood_alert returned False")
+            except Exception as e:
+                logger.error(f"❌ EXCEPTION sending email: {str(e)}", exc_info=True)
+                email_sent = False
+        else:
+            logger.warning(f"⚠️ No recipients found for child {current_child.id}")
         
         # Clear pending alert
         clear_pending_alert(current_child.id)
+        logger.info(f"✓ Cleared pending alert for child {current_child.id}")
         
         return {
             "status": "success",
-            "message": "Alert sent to parent and trusted contacts",
-            "email_sent": True
+            "message": "Alert sent to parent and trusted contacts" if email_sent else "Alert approved but email sending failed",
+            "email_sent": email_sent,
+            "recipients_count": len(recipients) if recipients else 0
         }
     else:
         # Student DECLINED - do not send email
+        logger.info(f"❌ Student {current_child.id} ({child.get('name')}) DECLINED alert - no email sent")
         clear_pending_alert(current_child.id)
         
         return {
