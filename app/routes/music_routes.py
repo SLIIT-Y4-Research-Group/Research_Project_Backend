@@ -59,7 +59,7 @@ def upload_track(
     emotions: str = Form(...),
     music_file: UploadFile = File(...),
     cover_image: UploadFile = File(...),
-    current_user: TokenData = Depends(get_current_user)
+    # current_user: TokenData = Depends(get_current_user)  # Authentication removed
 ):
     emotions_list = [e.strip() for e in emotions.split(",") if e.strip()]
 
@@ -69,7 +69,7 @@ def upload_track(
         emotions=emotions_list,
         music_file=music_file,
         cover_image=cover_image,
-        uploader=current_user
+        uploader=None  # No authentication, uploader is None
     )
 
     return TrackCreateResponse(
