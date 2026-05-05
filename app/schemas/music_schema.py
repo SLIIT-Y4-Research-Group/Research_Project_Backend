@@ -19,3 +19,13 @@ class TrackCreateResponse(BaseModel):
     cover_url: str
     created_at: datetime
     uploader: TrackUploader
+
+
+class TrackResponse(BaseModel):
+    id: str
+    title: str
+    artist: str
+    emotions: List[str]
+    music_url: str
+    cover_url: Optional[str] = None
+    created_at: datetime

@@ -11,8 +11,11 @@ IMG_SIZE = 224
 
 # Emotion labels
 EMOTION_LABELS = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
+MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "face_emotion_model.h5")
 
 _HF_EMOTION_PIPELINE = None
+_FACE_EMOTION_MODEL = None
+_FACE_EMOTION_MODEL_LOAD_ATTEMPTED = False
 
 _HF_LABEL_ALIASES = {
     "angry": ["angry", "anger", "mad"],
@@ -78,6 +81,45 @@ def _predict_emotion_hf(input_data):
 
     return EMOTION_LABELS.index(best_label), max(0.0, min(1.0, best_score))
 
+def _get_face_emotion_model():
+    global _FACE_EMOTION_MODEL, _FACE_EMOTION_MODEL_LOAD_ATTEMPTED
+    if _FACE_EMOTION_MODEL_LOAD_ATTEMPTED:
+        return _FACE_EMOTION_MODEL
+
+    _FACE_EMOTION_MODEL_LOAD_ATTEMPTED = True
+    try:
+        from tensorflow.keras.models import load_model
+        if os.path.exists(MODEL_PATH):
+            _FACE_EMOTION_MODEL = load_model(MODEL_PATH, compile=False)
+        else:
+            print(f"face_emotion_model.h5 not found at: {MODEL_PATH}")
+    except Exception as e:
+        print(f"Failed to load face_emotion_model.h5: {e}")
+        _FACE_EMOTION_MODEL = None
+    return _FACE_EMOTION_MODEL
+
+def _predict_emotion_local_h5(input_data):
+    model = _get_face_emotion_model()
+    if model is None:
+        raise RuntimeError("Local face emotion model is unavailable.")
+
+    resized = Image.fromarray(input_data).resize((IMG_SIZE, IMG_SIZE))
+    arr = np.array(resized).astype(np.float32) / 255.0
+    arr = np.expand_dims(arr, axis=0)
+
+    preds = model.predict(arr, verbose=0)
+    preds = np.array(preds).squeeze()
+    if preds.ndim != 1 or preds.size == 0:
+        raise RuntimeError("Invalid prediction shape from local model.")
+
+    # Align to known label set size defensively
+    pred_len = min(len(EMOTION_LABELS), preds.shape[0])
+    scores = preds[:pred_len]
+    emotion_idx = int(np.argmax(scores))
+    confidence = float(scores[emotion_idx])
+    confidence = max(0.0, min(1.0, confidence))
+    return emotion_idx, confidence
+
 
 def predict_emotion(input_data):
     """
@@ -99,14 +141,19 @@ def predict_emotion(input_data):
     else:
         input_data = input_data.astype(np.uint8)
     
-    provider = _get_emotion_provider()
+    # Primary: local .h5 model
+    try:
+        return _predict_emotion_local_h5(input_data)
+    except Exception as e:
+        print(f"Local face_emotion_model.h5 inference error: {e}")
 
+    provider = _get_emotion_provider()
     if provider == "huggingface":
         try:
             return _predict_emotion_hf(input_data)
         except Exception as e:
             print(f"Hugging Face error: {e}")
-            # Fallback to DeepFace if HF fails
+            # Continue fallback to DeepFace
 
     try:
         # Use DeepFace to analyze emotion
