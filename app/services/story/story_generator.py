@@ -154,7 +154,7 @@ class StoryGenerator:
 
         prompt = f"""
 Rewrite the following story to make it:
-- Easy to read for children aged 12–14
+- Easy to read for children aged 8-12
 - Emotionally engaging and relatable
 - Clear and well-structured
 - Keep the same meaning but improve grammar and flow

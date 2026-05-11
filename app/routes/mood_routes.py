@@ -510,16 +510,16 @@ def respond_alert_permission(
     
     # Handle student's decision
     if data.approve:
-        logger.info(f"📧 Student {current_child.id} ({child.get('name')}) APPROVED alert - sending emails")
+        logger.info(f" Student {current_child.id} ({child.get('name')}) APPROVED alert - sending emails")
         
         # Student APPROVED - send email alerts
         recipients = get_parent_and_trusted_emails(current_child.id)
-        logger.info(f"📧 Email recipients: {recipients}")
+        logger.info(f" Email recipients: {recipients}")
         
         email_sent = False
         if recipients:
             try:
-                logger.info(f"📧 Attempting to send alert to {len(recipients)} recipient(s)")
+                logger.info(f" Attempting to send alert to {len(recipients)} recipient(s)")
                 email_result = send_mood_alert(
                     recipients=recipients,
                     child_name=child.get("name", "the child"),
@@ -527,14 +527,14 @@ def respond_alert_permission(
                 )
                 email_sent = bool(email_result)
                 if email_sent:
-                    logger.info(f"✅ SUCCESS: Email sent to {recipients}")
+                    logger.info(f" SUCCESS: Email sent to {recipients}")
                 else:
-                    logger.error(f"❌ FAILED: send_mood_alert returned False")
+                    logger.error(f" FAILED: send_mood_alert returned False")
             except Exception as e:
-                logger.error(f"❌ EXCEPTION sending email: {str(e)}", exc_info=True)
+                logger.error(f" EXCEPTION sending email: {str(e)}", exc_info=True)
                 email_sent = False
         else:
-            logger.warning(f"⚠️ No recipients found for child {current_child.id}")
+            logger.warning(f" No recipients found for child {current_child.id}")
         
         # Clear pending alert
         clear_pending_alert(current_child.id)
@@ -548,7 +548,7 @@ def respond_alert_permission(
         }
     else:
         # Student DECLINED - do not send email
-        logger.info(f"❌ Student {current_child.id} ({child.get('name')}) DECLINED alert - no email sent")
+        logger.info(f" Student {current_child.id} ({child.get('name')}) DECLINED alert - no email sent")
         clear_pending_alert(current_child.id)
         
         return {
